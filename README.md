@@ -1,6 +1,6 @@
-# StockApp Muter
+# StockApp
 
-Sistema de gestión de stock de rollos textiles para Muter Textil. Proyecto MVP de tesis (ITBA).
+Sistema de gestión de stock de rollos textiles. Proyecto MVP de tesis (ITBA).
 
 ## Stack
 
@@ -22,7 +22,7 @@ Abrí [http://localhost:3000](http://localhost:3000).
 ## Estado
 
 - ✅ **Etapa 0** — bootstrap (Next + Tailwind + shadcn, deploy a Vercel)
-- ⏳ Etapa 1 — modelo de datos + auth con roles
+- ✅ **Etapa 1** — modelo de datos + auth con roles
 - ⏳ Etapa 2 — ingreso manual de despacho
 - ⏳ Etapa 3 — extracción IA + auditoría
 - ⏳ Etapa 4 — confirmación física en mobile (scanner QR/barcode)

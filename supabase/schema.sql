@@ -120,6 +120,7 @@ CREATE TABLE rollos (
   numero_pieza      TEXT NOT NULL,
   codigo_externo    TEXT,
   color             TEXT,
+  ubicacion         TEXT,                  -- ej: "A42" — slot físico en el depósito
   kilos             NUMERIC(10, 2),
   metros            NUMERIC(10, 2),
   ratio_rendimiento NUMERIC(10, 4),

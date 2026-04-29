@@ -13,8 +13,8 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "StockApp Muter",
-  description: "Sistema de gestión de stock de rollos textiles para Muter Textil",
+  title: "StockApp",
+  description: "Sistema de gestión de stock de rollos textiles",
 };
 
 export default function RootLayout({

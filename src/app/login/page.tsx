@@ -46,7 +46,7 @@ export default function LoginPage() {
     <main className="flex min-h-screen flex-col items-center justify-center p-4 bg-zinc-50">
       <div className="w-full max-w-sm space-y-6 rounded-xl bg-white p-8 shadow-sm border">
         <div className="space-y-1 text-center">
-          <h1 className="text-2xl font-bold tracking-tight">StockApp Muter</h1>
+          <h1 className="text-2xl font-bold tracking-tight">StockApp</h1>
           <p className="text-sm text-muted-foreground">Ingresá con tu cuenta</p>
         </div>
 
@@ -62,7 +62,7 @@ export default function LoginPage() {
               onChange={(e) => setEmail(e.target.value)}
               required
               autoComplete="email"
-              placeholder="usuario@muter.com"
+              placeholder="usuario@mail.com"
               className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
             />
           </div>

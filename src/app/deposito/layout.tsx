@@ -25,7 +25,7 @@ export default async function DepositoLayout({
   return (
     <div className="min-h-screen flex flex-col bg-zinc-50">
       <header className="border-b bg-white px-4 py-3 flex items-center justify-between">
-        <span className="font-semibold text-sm">StockApp Muter — Depósito</span>
+        <span className="font-semibold text-sm">StockApp — Depósito</span>
         <div className="flex items-center gap-3">
           <span className="text-sm text-muted-foreground">{profile.nombre}</span>
           <LogoutButton />

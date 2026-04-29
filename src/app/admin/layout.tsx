@@ -25,7 +25,7 @@ export default async function AdminLayout({
   return (
     <div className="min-h-screen flex flex-col">
       <header className="border-b bg-white px-6 py-3 flex items-center justify-between">
-        <span className="font-semibold text-sm">StockApp Muter</span>
+        <span className="font-semibold text-sm">StockApp</span>
         <div className="flex items-center gap-4">
           <span className="text-sm text-muted-foreground">{profile.nombre}</span>
           <LogoutButton />
