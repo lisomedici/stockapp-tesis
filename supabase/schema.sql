@@ -60,9 +60,9 @@ ALTER TABLE articulos ENABLE ROW LEVEL SECURITY;
 CREATE POLICY "Autenticados leen artículos"
   ON articulos FOR SELECT TO authenticated USING (true);
 
-CREATE POLICY "Admin gestiona artículos"
+CREATE POLICY "Admin y operario gestionan artículos"
   ON articulos FOR ALL TO authenticated
-  USING ((SELECT role FROM profiles WHERE id = auth.uid()) = 'admin');
+  USING ((SELECT role FROM profiles WHERE id = auth.uid()) IN ('admin', 'operario'));
 
 
 -- ── TINTORERÍAS ─────────────────────────────────────────────
@@ -79,9 +79,9 @@ ALTER TABLE tintorerias ENABLE ROW LEVEL SECURITY;
 CREATE POLICY "Autenticados leen tintorerías"
   ON tintorerias FOR SELECT TO authenticated USING (true);
 
-CREATE POLICY "Admin gestiona tintorerías"
+CREATE POLICY "Admin y operario gestionan tintorerías"
   ON tintorerias FOR ALL TO authenticated
-  USING ((SELECT role FROM profiles WHERE id = auth.uid()) = 'admin');
+  USING ((SELECT role FROM profiles WHERE id = auth.uid()) IN ('admin', 'operario'));
 
 
 -- ── DESPACHOS ───────────────────────────────────────────────

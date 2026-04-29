@@ -9,6 +9,7 @@ export type RolloInput = {
   metros: string
   ratio_rendimiento: string
   ubicacion: string
+  estado: 'en_stock' | 'pendiente'
 }
 
 export type DespachoInput = {
@@ -19,14 +20,11 @@ export type DespachoInput = {
   total_rollos_declarado: string
   total_kilos_declarado: string
   rollos: RolloInput[]
-  /** true = los rollos ya están físicamente en el depósito */
-  confirmado_fisico: boolean
 }
 
 export async function createDespacho(input: DespachoInput) {
   const supabase = await createClient()
 
-  // Validaciones server-side
   if (!input.tintoreria_id) return { error: 'Falta seleccionar la tintorería.' }
   if (!input.articulo_id) return { error: 'Falta seleccionar el artículo.' }
   if (!input.fecha_despacho) return { error: 'Falta la fecha del despacho.' }
@@ -36,10 +34,10 @@ export async function createDespacho(input: DespachoInput) {
     if (!r.numero_pieza.trim()) {
       return { error: 'Todos los rollos deben tener número de pieza.' }
     }
-    if (input.confirmado_fisico && !r.ubicacion.trim()) {
+    if (r.estado === 'en_stock' && !r.ubicacion.trim()) {
       return {
         error:
-          'Cuando los rollos ya están en el depósito, todos deben tener ubicación.',
+          'Los rollos en estado "en stock" deben tener ubicación asignada.',
       }
     }
   }
@@ -56,11 +54,12 @@ export async function createDespacho(input: DespachoInput) {
 
   if (!user) return { error: 'Sesión expirada — volvé a iniciar sesión.' }
 
-  // Estado del despacho y de los rollos según confirmación física
-  const despachoEstado = input.confirmado_fisico ? 'confirmado' : 'borrador'
-  const rolloEstado = input.confirmado_fisico ? 'en_stock' : 'pendiente'
+  // Estado del despacho derivado de los rollos:
+  // - todos en_stock → confirmado
+  // - alguno pendiente → borrador (esperando confirmación física)
+  const algunoPendiente = input.rollos.some((r) => r.estado === 'pendiente')
+  const despachoEstado = algunoPendiente ? 'borrador' : 'confirmado'
 
-  // 1. Insert despacho
   const { data: despacho, error: dError } = await supabase
     .from('despachos')
     .insert({
@@ -85,7 +84,6 @@ export async function createDespacho(input: DespachoInput) {
     return { error: `No se pudo crear el despacho: ${dError?.message}` }
   }
 
-  // 2. Insert rollos
   const rollosToInsert = input.rollos.map((r) => ({
     despacho_id: despacho.id,
     articulo_id: input.articulo_id,
@@ -97,7 +95,7 @@ export async function createDespacho(input: DespachoInput) {
       ? parseFloat(r.ratio_rendimiento)
       : null,
     ubicacion: r.ubicacion.trim() || null,
-    estado: rolloEstado,
+    estado: r.estado,
   }))
 
   const { error: rError } = await supabase.from('rollos').insert(rollosToInsert)
@@ -108,4 +106,36 @@ export async function createDespacho(input: DespachoInput) {
   }
 
   return { success: true, despachoId: despacho.id }
+}
+
+// ── Creación inline desde el form ───────────────────────────
+
+export async function createTintoreriaInline(nombre: string) {
+  const supabase = await createClient()
+  const cleanName = nombre.trim()
+  if (!cleanName) return { error: 'El nombre no puede estar vacío.' }
+
+  const { data, error } = await supabase
+    .from('tintorerias')
+    .insert({ nombre: cleanName })
+    .select('id, nombre')
+    .single()
+
+  if (error || !data) return { error: error?.message ?? 'Error al crear.' }
+  return { success: true, data }
+}
+
+export async function createArticuloInline(nombre: string) {
+  const supabase = await createClient()
+  const cleanName = nombre.trim()
+  if (!cleanName) return { error: 'El nombre no puede estar vacío.' }
+
+  const { data, error } = await supabase
+    .from('articulos')
+    .insert({ nombre: cleanName })
+    .select('id, nombre')
+    .single()
+
+  if (error || !data) return { error: error?.message ?? 'Error al crear.' }
+  return { success: true, data }
 }

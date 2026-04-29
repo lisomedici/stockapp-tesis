@@ -2,7 +2,12 @@
 
 import { useMemo, useState } from 'react'
 import { useRouter } from 'next/navigation'
-import { createDespacho, type RolloInput } from './actions'
+import {
+  createDespacho,
+  createTintoreriaInline,
+  createArticuloInline,
+  type RolloInput,
+} from './actions'
 
 type Catalog = { id: string; nombre: string }
 
@@ -14,6 +19,7 @@ function emptyRollo(): RolloInput {
     metros: '',
     ratio_rendimiento: '',
     ubicacion: '',
+    estado: 'en_stock',
   }
 }
 
@@ -22,16 +28,17 @@ function todayISO() {
 }
 
 export default function NuevoDespachoForm({
-  tintorerias,
-  articulos,
+  tintorerias: initialTintorerias,
+  articulos: initialArticulos,
 }: {
   tintorerias: Catalog[]
   articulos: Catalog[]
 }) {
   const router = useRouter()
 
-  // Toggle: ¿los rollos ya están físicamente en el depósito?
-  const [confirmadoFisico, setConfirmadoFisico] = useState(true)
+  // Catálogos (mutable porque se pueden agregar inline)
+  const [tintorerias, setTintorerias] = useState(initialTintorerias)
+  const [articulos, setArticulos] = useState(initialArticulos)
 
   // Header
   const [tintoreriaId, setTintoreriaId] = useState('')
@@ -47,7 +54,11 @@ export default function NuevoDespachoForm({
   const [submitting, setSubmitting] = useState(false)
   const [submitError, setSubmitError] = useState<string | null>(null)
 
-  function updateRollo(idx: number, field: keyof RolloInput, value: string) {
+  function updateRollo<K extends keyof RolloInput>(
+    idx: number,
+    field: K,
+    value: RolloInput[K]
+  ) {
     setRollos(
       rollos.map((r, i) => (i === idx ? { ...r, [field]: value } : r))
     )
@@ -95,11 +106,13 @@ export default function NuevoDespachoForm({
       totalKilosNum === null ||
       Math.abs(totalKilosNum - sumaKilos) < 0.01
 
-    // Si está confirmado físicamente, todos los rollos cargados deben tener ubicación
-    const rollosCargados = rollos.filter((r) => r.numero_pieza.trim())
-    const ubicacionesFaltantes = confirmadoFisico
-      ? rollosCargados.filter((r) => !r.ubicacion.trim()).length
-      : 0
+    // Para cada rollo en_stock con número de pieza, ubicación es obligatoria
+    const ubicacionesFaltantes = rollos.filter(
+      (r) =>
+        r.numero_pieza.trim() &&
+        r.estado === 'en_stock' &&
+        !r.ubicacion.trim()
+    ).length
 
     return {
       sumaKilos,
@@ -109,7 +122,7 @@ export default function NuevoDespachoForm({
       kilosCoinciden,
       ubicacionesFaltantes,
     }
-  }, [rollos, totalRollosDeclarado, totalKilosDeclarado, confirmadoFisico])
+  }, [rollos, totalRollosDeclarado, totalKilosDeclarado])
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
@@ -124,7 +137,6 @@ export default function NuevoDespachoForm({
       total_rollos_declarado: totalRollosDeclarado,
       total_kilos_declarado: totalKilosDeclarado,
       rollos: rollos.filter((r) => r.numero_pieza.trim()),
-      confirmado_fisico: confirmadoFisico,
     })
 
     if (result.error) {
@@ -148,48 +160,6 @@ export default function NuevoDespachoForm({
 
   return (
     <form onSubmit={handleSubmit} className="space-y-6">
-      {/* Toggle de confirmación física */}
-      <div className="rounded-lg border bg-white p-5 shadow-sm space-y-3">
-        <h2 className="font-semibold">¿Los rollos ya están en el depósito?</h2>
-        <div className="space-y-2">
-          <label className="flex items-start gap-3 cursor-pointer">
-            <input
-              type="radio"
-              name="confirmado"
-              checked={confirmadoFisico}
-              onChange={() => setConfirmadoFisico(true)}
-              className="mt-1"
-            />
-            <div>
-              <p className="text-sm font-medium">
-                Sí, los tengo en mano — quedan en stock
-              </p>
-              <p className="text-xs text-muted-foreground">
-                La ubicación es obligatoria. El despacho queda confirmado.
-              </p>
-            </div>
-          </label>
-          <label className="flex items-start gap-3 cursor-pointer">
-            <input
-              type="radio"
-              name="confirmado"
-              checked={!confirmadoFisico}
-              onChange={() => setConfirmadoFisico(false)}
-              className="mt-1"
-            />
-            <div>
-              <p className="text-sm font-medium">
-                Todavía no llegaron — solo precargo la planilla
-              </p>
-              <p className="text-xs text-muted-foreground">
-                Los rollos quedan en estado &quot;pendiente&quot;. El operario
-                los confirma con scanner cuando lleguen.
-              </p>
-            </div>
-          </label>
-        </div>
-      </div>
-
       {/* Header */}
       <div className="rounded-lg border bg-white p-5 shadow-sm space-y-4">
         <h2 className="font-semibold">Datos del despacho</h2>
@@ -210,6 +180,18 @@ export default function NuevoDespachoForm({
                 </option>
               ))}
             </select>
+            <InlineCreator
+              label="+ Nueva tintorería"
+              placeholder="Nombre de la tintorería"
+              onCreate={async (nombre) => {
+                const res = await createTintoreriaInline(nombre)
+                if (res.success && res.data) {
+                  setTintorerias([...tintorerias, res.data])
+                  setTintoreriaId(res.data.id)
+                }
+                return res
+              }}
+            />
           </div>
 
           <div className="space-y-1">
@@ -227,6 +209,18 @@ export default function NuevoDespachoForm({
                 </option>
               ))}
             </select>
+            <InlineCreator
+              label="+ Nuevo artículo"
+              placeholder="Nombre del artículo"
+              onCreate={async (nombre) => {
+                const res = await createArticuloInline(nombre)
+                if (res.success && res.data) {
+                  setArticulos([...articulos, res.data])
+                  setArticuloId(res.data.id)
+                }
+                return res
+              }}
+            />
           </div>
 
           <div className="space-y-1">
@@ -302,9 +296,8 @@ export default function NuevoDespachoForm({
                 <th className="px-3 py-2 font-medium w-24">Kilos</th>
                 <th className="px-3 py-2 font-medium w-24">Metros</th>
                 <th className="px-3 py-2 font-medium w-20">Ratio</th>
-                <th className="px-3 py-2 font-medium w-28">
-                  Ubicación{confirmadoFisico ? ' *' : ''}
-                </th>
+                <th className="px-3 py-2 font-medium w-32">Estado</th>
+                <th className="px-3 py-2 font-medium w-28">Ubicación</th>
                 <th className="px-3 py-2 w-10"></th>
               </tr>
             </thead>
@@ -314,8 +307,8 @@ export default function NuevoDespachoForm({
                   r.numero_pieza.trim() &&
                   validations.duplicados.includes(r.numero_pieza.trim())
                 const ubicacionFaltante =
-                  confirmadoFisico &&
                   r.numero_pieza.trim() &&
+                  r.estado === 'en_stock' &&
                   !r.ubicacion.trim()
                 return (
                   <tr
@@ -391,13 +384,31 @@ export default function NuevoDespachoForm({
                       />
                     </td>
                     <td className="px-3 py-1">
+                      <select
+                        value={r.estado}
+                        onChange={(e) =>
+                          updateRollo(
+                            i,
+                            'estado',
+                            e.target.value as RolloInput['estado']
+                          )
+                        }
+                        className="w-full rounded border border-input bg-background px-2 py-1.5 text-sm focus:outline-none focus:ring-1 focus:ring-ring"
+                      >
+                        <option value="en_stock">En stock</option>
+                        <option value="pendiente">Pendiente</option>
+                      </select>
+                    </td>
+                    <td className="px-3 py-1">
                       <input
                         type="text"
                         value={r.ubicacion}
                         onChange={(e) =>
                           updateRollo(i, 'ubicacion', e.target.value)
                         }
-                        placeholder="A42"
+                        placeholder={
+                          r.estado === 'en_stock' ? 'A42' : 'opcional'
+                        }
                         className={`w-full rounded border px-2 py-1.5 text-sm focus:outline-none focus:ring-1 focus:ring-ring ${
                           ubicacionFaltante
                             ? 'border-destructive'
@@ -448,8 +459,8 @@ export default function NuevoDespachoForm({
           {validations.ubicacionesFaltantes > 0 && (
             <p className="text-destructive">
               ⚠ Faltan ubicaciones en {validations.ubicacionesFaltantes} rollo
-              {validations.ubicacionesFaltantes > 1 ? 's' : ''} (obligatorio
-              cuando los rollos ya están en el depósito).
+              {validations.ubicacionesFaltantes > 1 ? 's' : ''} con estado
+              &quot;en stock&quot;.
             </p>
           )}
           {!validations.cantidadCoincide && (
@@ -488,5 +499,95 @@ export default function NuevoDespachoForm({
         </button>
       </div>
     </form>
+  )
+}
+
+// ── Componente para crear catálogo inline ───────────────────
+
+function InlineCreator({
+  label,
+  placeholder,
+  onCreate,
+}: {
+  label: string
+  placeholder: string
+  onCreate: (
+    nombre: string
+  ) => Promise<{ success?: boolean; data?: Catalog; error?: string }>
+}) {
+  const [open, setOpen] = useState(false)
+  const [value, setValue] = useState('')
+  const [loading, setLoading] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+
+  async function handleSave() {
+    if (!value.trim()) return
+    setLoading(true)
+    setError(null)
+    const res = await onCreate(value)
+    setLoading(false)
+    if (res.error) {
+      setError(res.error)
+    } else {
+      setValue('')
+      setOpen(false)
+    }
+  }
+
+  function reset() {
+    setOpen(false)
+    setValue('')
+    setError(null)
+  }
+
+  if (!open) {
+    return (
+      <button
+        type="button"
+        onClick={() => setOpen(true)}
+        className="text-xs text-primary hover:underline"
+      >
+        {label}
+      </button>
+    )
+  }
+
+  return (
+    <div className="space-y-1">
+      <div className="flex gap-2">
+        <input
+          type="text"
+          value={value}
+          onChange={(e) => setValue(e.target.value)}
+          placeholder={placeholder}
+          autoFocus
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') {
+              e.preventDefault()
+              handleSave()
+            } else if (e.key === 'Escape') {
+              reset()
+            }
+          }}
+          className="flex-1 rounded-md border border-input bg-background px-3 py-1.5 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+        />
+        <button
+          type="button"
+          onClick={handleSave}
+          disabled={loading || !value.trim()}
+          className="rounded-md bg-primary px-3 py-1.5 text-xs font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-50"
+        >
+          {loading ? '...' : 'Guardar'}
+        </button>
+        <button
+          type="button"
+          onClick={reset}
+          className="rounded-md border bg-white px-3 py-1.5 text-xs hover:bg-zinc-50"
+        >
+          Cancelar
+        </button>
+      </div>
+      {error && <p className="text-xs text-destructive">{error}</p>}
+    </div>
   )
 }
