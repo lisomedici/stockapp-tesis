@@ -262,34 +262,277 @@ Por default Supabase usa el flow **legacy** que no funciona con SSR. Hay que cus
 
 ---
 
-## 10. Plan de etapas
+## 10. Plan de etapas detallado
 
 ### Estado actual
 
 | # | Etapa | Estado |
 |---|---|---|
 | 0 | Bootstrap (Next + Tailwind + shadcn + deploy) | ✅ |
-| 1 | Modelo de datos + auth con roles (3 roles iniciales) | ✅ |
+| 1 | Modelo de datos + auth con roles | ✅ |
 | 2 | Ingreso manual de despacho con sus rollos | ✅ |
-| Multi-tenant | (no era etapa, se metió entre 2 y 3) | ✅ casi terminada (falta validar último test de invitación con email template fixeado) |
+| Multi-tenant | (no era etapa, se metió entre 2 y 3) | ✅ pendiente último test de invitación con email template fixeado |
 | **3** | **Extracción IA de planilla + auditoría side-by-side** | ⏳ próxima |
-| 4 | Confirmación física en mobile (scanner QR/barcode + asignación de ubicación) | ⏳ |
-| 5 | Vista de stock con filtros (artículo, color, partida, ubicación) | ⏳ |
-| 6 | Pedidos + picking (ventas crea, operario prepara) | ⏳ |
-| 7 | Muestras + reportes + **rediseño UI/UX completo + responsive** | ⏳ |
+| 4 | Confirmación física en mobile (scanner) | ⏳ |
+| 5 | Vista de stock con filtros | ⏳ |
+| 6 | Pedidos + picking | ⏳ |
+| 7 | Muestras + reportes + rediseño UI/UX | ⏳ |
 
 ### Polish acordado
 
-En cada etapa que se cierre, dedicar 20-30 min a que la pantalla nueva quede prolija (no cruda). En **Etapa 7** se hace el rediseño grande con sidebar de navegación, drawer en mobile, toasts, dialogs, skeletons, iconos, etc.
+En cada etapa que se cierre, dedicar 20-30 min a que las pantallas nuevas no queden crudas (espaciado, copy, estados de carga básicos). En **Etapa 7** se hace el rediseño grande con sidebar, drawer mobile, toasts, dialogs, etc.
+
+---
+
+### Etapa 3 — Extracción IA de planilla + auditoría
+
+**Objetivo**: admin (o operario) sube imagen/PDF de la planilla que llegó de la tintorería. La IA extrae los rollos automáticamente. Vista side-by-side con la imagen original a la izquierda y tabla editable a la derecha. Humano audita y confirma. Es el feature **diferenciador del MVP**.
+
+**Pasos**:
+1. **Setup Gemini**: cuenta en https://aistudio.google.com → generar API key → agregar `GEMINI_API_KEY` a Vercel (Production + Preview, marcado sensitive) y a `.env.local`.
+2. **Setup Storage en Supabase**: crear bucket "planillas" (privado) en Storage → política RLS que cada empresa solo accede a sus archivos (usar `current_empresa_id()`).
+3. **Instalar dependencia**: `npm install @google/genai`.
+4. **Crear abstracción IA** en `src/lib/ai/extraerPlanilla.ts`:
+   - Función `extraerPlanilla(file: Buffer, mimeType: string): Promise<DespachoExtraido>`.
+   - Tipos: `DespachoExtraido { numero_remito?, fecha?, total_rollos?, total_kilos?, color?, rollos: RolloExtraido[] }`.
+   - `RolloExtraido { numero_pieza, color, kilos, metros, ratio?, confianza }`.
+5. **Implementación con Gemini** en `src/lib/ai/gemini.ts`:
+   - Prompt explicando que la planilla viene en **bloques paralelos de columnas**.
+   - Pedir JSON output con schema (Gemini soporta `responseSchema`).
+   - Calcular confianza por campo basado en heurísticas (longitud del texto, formato esperado, etc.).
+6. **UI nueva en `/operario/despachos/nuevo`**:
+   - Toggle al inicio del form: "Cargar a mano" vs "Subir planilla con IA".
+   - Si "Subir planilla":
+     - Drag-and-drop area que acepta JPG, PNG, PDF.
+     - Preview de la imagen.
+     - Spinner mientras IA procesa (típicamente 3-8 segundos).
+     - Auto-llena el form con los datos extraídos.
+     - Filas con baja confianza en algún campo: borde amarillo + tooltip "verificá este valor".
+7. **Storage de la imagen**: subir a bucket "planillas" antes/después de procesar, guardar URL en `despachos.imagen_url`.
+8. **Vista side-by-side**:
+   - Desktop: layout split 50/50 (imagen zoomable izquierda, tabla editable derecha).
+   - Mobile: tabs ("Planilla" / "Datos extraídos").
+9. **Marcar origen**: cuando se guarda, `despachos.origen = 'planilla_ia'` (en vez de 'manual').
+10. **Estado del despacho**: queda como `auditado` (no `confirmado` directo), porque los rollos no fueron físicamente verificados aún. Eso pasa en Etapa 4.
+
+**Archivos nuevos**:
+- `src/lib/ai/extraerPlanilla.ts`, `src/lib/ai/gemini.ts`
+- `src/lib/storage/planillas.ts` (helpers de upload a Supabase Storage)
+
+**Archivos a modificar**:
+- `src/app/operario/despachos/nuevo/NuevoDespachoForm.tsx` (agregar modo IA)
+- `src/app/operario/despachos/nuevo/actions.ts` (manejar el upload + IA)
+
+**Variables de entorno nuevas**: `GEMINI_API_KEY`.
+
+**Verificable**: subir una planilla real de Muter (foto de la papelita con 24 rollos), ver los rollos extraídos correctamente con confianza por celda, corregir lo que la IA leyó mal (ej: 0/O confundidos), confirmar y ver el despacho cargado en estado `auditado`.
+
+**Tiempo estimado**: 4-6 horas guiadas.
+
+---
+
+### Etapa 4 — Confirmación física por scanner
+
+**Objetivo**: el operario va al depósito con su celular, escanea cada rollo físico, asigna ubicación, y el rollo pasa de `pendiente` a `en_stock`. Es la "aduana" del sistema.
+
+**Pasos**:
+1. **Instalar scanner library**: `npm install @zxing/browser @zxing/library`.
+2. **Pantalla `/operario/confirmar`** (lista):
+   - Lista de despachos con al menos 1 rollo en estado `pendiente`.
+   - Cada despacho muestra: tintorería, fecha, "X de Y rollos pendientes".
+   - Click → entra al modo scanner del despacho.
+3. **Pantalla `/operario/confirmar/[despacho_id]`** (modo scanner):
+   - Cámara fullscreen mobile (con permission request).
+   - Detector zxing corriendo en loop, intenta cada frame.
+   - Soporta QR, Code128, EAN-13, EAN-8, ITF.
+4. **Lógica de match** al escanear un código:
+   - Buscar `rollo` donde `(codigo_externo = X OR numero_pieza = X) AND despacho_id = id AND estado = 'pendiente'`.
+   - Si **match único**: dialog "Rollo X" → input "Ubicación (ej: A42)" → guardar → rollo pasa a `en_stock`.
+   - Si **no match**: error rojo "Este código no pertenece a este despacho" + botón "Ingresar manualmente".
+   - Si **ya escaneado**: error "Ya confirmado".
+5. **Progreso visible** arriba:
+   - Banner: "12 de 24 rollos confirmados".
+   - Lista colapsable de pendientes (números de pieza).
+6. **Fallback manual**: botón "Ingresar a mano" → busca rollo por número de pieza → asigna ubicación.
+7. **Cierre del despacho**:
+   - Cuando todos los rollos pasan a `en_stock`, el despacho pasa a `confirmado` automáticamente.
+   - Mensaje de éxito + redirect al listado.
+
+**Archivos nuevos**:
+- `src/app/operario/confirmar/page.tsx`
+- `src/app/operario/confirmar/[id]/page.tsx`
+- `src/app/operario/confirmar/[id]/Scanner.tsx` (Client component con zxing)
+- `src/app/operario/confirmar/[id]/actions.ts` (`confirmarRollo()`)
+
+**Verificable**: con un despacho cargado por IA en estado `auditado` (rollos en `pendiente`), ir a `/operario/confirmar`, escanear los códigos físicos uno por uno, ver progreso en tiempo real, intentar escanear un código equivocado y ver el bloqueo, terminar con despacho en `confirmado`.
+
+**Tiempo estimado**: 3-4 horas.
+
+---
+
+### Etapa 5 — Vista de stock con filtros
+
+**Objetivo**: cualquier rol logueado puede browsear el stock disponible, filtrar por artículo/color/ubicación, ver fotos.
+
+**Pasos**:
+1. **Decisión de ruta**: idealmente `/stock` accesible para los 3 roles, layout adaptado por rol. O 3 rutas idénticas en contenido (`/operario/stock`, `/ventas/stock`, `/admin/stock`). **Recomendación**: ruta única `/stock` con guard que la permite a operario+ventas+admin (no super).
+2. **Filtros laterales (sidebar) o arriba**:
+   - Artículo (dropdown con los artículos de la empresa).
+   - Color (texto libre).
+   - Tintorería/partida (dropdown).
+   - Ubicación (texto).
+   - Estado (default: solo `en_stock`; filtros opcionales para `reservado`, `entregado`, `baja`).
+   - Búsqueda por número de pieza (input arriba).
+3. **Vista responsive**:
+   - Desktop: tabla con columnas: foto thumbnail, número de pieza, artículo, color, kilos, metros, ubicación, estado.
+   - Mobile: cards apilados con la info importante.
+4. **Resumen agregado** arriba de la tabla:
+   - Total kilos en stock.
+   - Top 5 combinaciones artículo+color por kilos.
+5. **Click en un rollo** → modal de detalle:
+   - Foto grande (si tiene).
+   - Toda la metadata (kilos propios vs proveedor, ubicación, despacho de origen, etc.).
+   - Acciones según rol:
+     - Operario/admin: "Mover" (cambiar ubicación).
+     - Admin: "Dar de baja".
+6. **Fotos de los rollos**: si en Etapa 3/4 implementamos upload de fotos, mostrarlas. Si no, placeholder con iniciales del color.
+
+**Archivos nuevos**:
+- `src/app/stock/page.tsx` (server component, fetcha rollos con filtros)
+- `src/app/stock/StockFilters.tsx` (Client component)
+- `src/app/stock/RolloDetail.tsx` (modal Client component)
+- `src/app/stock/layout.tsx` (guard de acceso)
+
+**Verificable**: con 20+ rollos cargados y confirmados, filtrar por color "Negro" y ver solo los negros, click en uno, abrir el detalle, mover de ubicación.
+
+**Tiempo estimado**: 2-3 horas.
+
+---
+
+### Etapa 6 — Pedidos y picking
+
+**Objetivo**: ventas crea pedidos seleccionando rollos específicos del stock; operario hace el picking en mobile.
+
+**Pasos**:
+
+**A) Creación del pedido (ventas)**:
+1. **Pantalla `/ventas/pedidos/nuevo`**:
+   - Header: cliente (texto o autocomplete), número de remito externo (Softland u otro), fecha.
+   - Tabla "carrito" de rollos seleccionados: pieza, artículo, color, kilos, X para sacar.
+   - Búsqueda de rollos disponibles abajo (mismos filtros que la vista de stock).
+   - Click en un rollo del listado lo agrega al carrito.
+   - Suma de kilos del carrito en vivo.
+   - Submit → `createPedido()`.
+2. **Server action `createPedido`**:
+   - Validaciones: cliente requerido, al menos 1 rollo.
+   - INSERT en `pedidos` (estado=`pendiente`).
+   - INSERT batch en `pedido_rollos`.
+   - UPDATE batch: `rollos.estado = 'reservado'` para los rollos seleccionados.
+   - Idealmente todo atómico (Postgres function/RPC) o sequential con cleanup en caso de error.
+3. **Pantalla `/ventas/pedidos`** (lista):
+   - Filtros por estado, cliente.
+   - Tabla con cliente, kilos totales, estado, fecha.
+4. **Pantalla `/ventas/pedidos/[id]`** (detalle):
+   - Datos del pedido + lista de rollos asignados.
+   - Acciones según estado:
+     - `pendiente` o `en_preparacion`: editar (agregar/sacar rollos), cancelar.
+     - `lista`: solo ver, esperando que admin marque como entregada.
+     - `entregada` / `cancelada`: solo lectura.
+5. **Cancelar pedido**: cambia estado a `cancelada` + libera rollos a `en_stock`.
+
+**B) Picking (operario)**:
+6. **Pantalla `/operario/picking`** (lista):
+   - Pedidos en estado `pendiente` o `en_preparacion` (solo los que necesitan trabajo).
+7. **Pantalla `/operario/picking/[pedido_id]`**:
+   - Lista de rollos a juntar, con su ubicación.
+   - Modo scanner para confirmar cada rollo (similar a Etapa 4).
+   - Validación dura: si escaneás un rollo que NO pertenece al pedido → error "Este rollo no es del pedido".
+   - Si escaneás uno repetido → error.
+   - No se puede cerrar si faltan rollos por escanear.
+8. **Cuando todos confirmados**: pedido pasa a `lista`. Notif al admin/ventas (en Etapa 7 los toasts globales se ocupan).
+
+**C) Despachar (admin)**:
+9. **Acción "Marcar como despachada"** desde el detalle (solo admin):
+   - Pedido pasa a `entregada`.
+   - Rollos pasan a `entregado`.
+10. **Acción "Cancelar"** (admin o ventas):
+    - Si pedido en `pendiente`/`en_preparacion`/`lista`, libera rollos a `en_stock`.
+
+**Archivos nuevos**:
+- `src/app/ventas/pedidos/page.tsx` (lista)
+- `src/app/ventas/pedidos/nuevo/page.tsx`, `NuevoPedidoForm.tsx`, `actions.ts`
+- `src/app/ventas/pedidos/[id]/page.tsx`
+- `src/app/operario/picking/page.tsx` (lista)
+- `src/app/operario/picking/[id]/page.tsx`, `PickingScanner.tsx`, `actions.ts`
+
+**Verificable**: ventas crea un pedido con 3 rollos para "Cliente Test", queda en `pendiente`. Operario va a picking, intenta escanear un rollo equivocado y la app bloquea, escanea los 3 correctos, queda `lista`. Admin entra al detalle y marca como `entregada`. Stock disponible disminuye.
+
+**Tiempo estimado**: 4-5 horas.
+
+---
+
+### Etapa 7 — Muestras, reportes, rediseño completo
+
+Es la más larga. Se divide en 4 sub-bloques.
+
+#### 7A — Módulo muestras
+
+1. **Migración 007**: crear tabla `muestras`:
+   ```
+   id, empresa_id, rollo_id, cliente, kilos_descontados, motivo, vinculado_a_pedido_id (nullable), created_by, created_at
+   ```
+2. **Pantalla `/operario/muestras/nuevo`**: form para registrar muestra.
+3. **Server action**: registra la muestra Y descuenta kilos del rollo (`UPDATE rollos SET kilos = kilos - X`).
+4. **Pantalla `/operario/muestras`** (listado).
+5. **Reporte muestras**: muestras del mes, qué clientes, kilos totales regalados, cuántas se vincularon a pedidos.
+
+#### 7B — Reportes (admin/dueño)
+
+6. **Pantalla `/admin/reportes`**.
+7. Reportes:
+   - Stock total por artículo+color (cantidad de rollos + kilos).
+   - Movimientos del mes: ingresos (rollos nuevos en `en_stock`) vs egresos (rollos a `entregado`).
+   - Diferencias proveedor vs propio (cuando hay datos en `kilos_propios`, `metros_propios`).
+   - Antigüedad del stock: rollos con más de N días sin moverse (configurable).
+8. Cada reporte: filtros de fecha + botón "Exportar a CSV".
+
+#### 7C — Rediseño UI/UX completo
+
+9. **Sidebar de navegación** lateral en desktop, drawer hamburger en mobile. Todas las secciones del rol agrupadas.
+10. **Sistema de toasts**: instalar `sonner`, reemplazar banners verdes/rojos puntuales con toasts globales consistentes.
+11. **Confirmation dialogs** para acciones destructivas (eliminar empresa, dar de baja rollo, cancelar pedido). Usar shadcn `Dialog`.
+12. **Loading skeletons** en pantallas que tardan (lista de stock con muchos items, reportes).
+13. **Empty states**: ilustración + CTA cuando una lista está vacía (en vez de solo texto "Sin items").
+14. **Iconos `lucide-react`**: en sidebar, botones, headers.
+15. **Mobile responsive**: convertir todas las tablas (despachos, stock, pedidos) en cards apilados en mobile (vista compacta).
+16. **Componentes shadcn extra**: instalar `Card`, `Dialog`, `Sheet` (drawer), `Tabs`, `Tooltip`, `Avatar`, `Skeleton`, `Badge`.
+17. **Animaciones**: micro-transitions en hover, fade-in en pantallas.
+18. **Visual hierarchy**: revisar tipografía, spacing, colores en TODA la app — pase de consistencia general.
+
+#### 7D — Polish data (rápidos)
+
+19. **Editar/borrar artículos y tintorerías** (botones en `/admin/articulos`, `/admin/tintorerias`).
+20. **Editar/borrar/pausar empresas** (botones en `/super` con confirmación dura para borrar).
+21. **Middleware bloquea login si empresa.activo = false**.
+22. **Editar usuarios y cambiar rol** (en `/admin/equipo`).
+23. **Eliminar usuario** (admin de la empresa puede dar de baja a su equipo; super-admin puede a cualquiera).
+24. **Forgot password flow**: pantalla `/auth/recover` que pide mail, llama `supabase.auth.resetPasswordForEmail()`. Supabase manda mail, link va a `/auth/setup` para nueva contraseña.
+
+**Verificable al final de Etapa 7**: app navegable, prolija, responsive en celular y desktop, lista para mostrar en defensa de tesis.
+
+**Tiempo estimado**: 6-8 horas (es la más larga porque el rediseño UI toca todas las pantallas).
+
+---
 
 ### Lo que NO está en el MVP (cosas mencionadas pero pospuestas)
 
 - **Valorización del stock**: costo por rollo (hilado + licra + tintorería + merma), dashboard valorizado solo para dueño. Subsistema entero, post-MVP.
-- **Control de calidad en recepción**: kilos/metros/ancho propios vs proveedor, gramaje, listado de fallas con origen, clasificación A/B/C automática.
-- **Alertas automáticas**: reserva vencida, stock viejo en crudo (>30 días para poliéster).
-- **Módulo chofer**: chofer escanea remito al entregar al cliente final.
-- **Edit/delete de catálogos y empresas** (hoy solo se crean; "borrar empresa" se hace via SQL).
-- **Sign-up público** (hoy solo invitation-only).
+- **Control de calidad en recepción avanzado**: gramaje calculado, listado de fallas con origen (tejeduría/tintorería/materia prima), clasificación A/B/C automática. Hay campos `kilos_propios`/`metros_propios`/`ancho_propio`/`gramaje_propio` ya en el schema, pero falta el form para cargarlos y los reportes que los usen.
+- **Alertas automáticas**: reserva vencida, stock viejo en crudo (>30 días para poliéster). Necesita cron job (Supabase Edge Functions o pg_cron).
+- **Módulo chofer**: chofer escanea remito al entregar al cliente final. Otro rol más, fuera del flujo principal.
+- **Sign-up público**: hoy solo invitation-only. Si en algún momento se quiere abrir, agregar página `/signup` + validación de email + cobro.
+- **Multi-idioma**: hoy solo español. i18n con next-intl si se quiere expandir.
+- **Auditoría / log de cambios**: tabla `audit_log` que registre quién hizo qué (útil para clientes con compliance).
 
 ---
 
@@ -377,21 +620,6 @@ $0 actualmente. Free tiers de GitHub + Vercel + Supabase + Google AI Studio (cua
 2. Decile al asistente la próxima etapa que querés encarar.
 3. Mencioná tu working style si no está claro: "vamos por etapas chicas, propose-then-act, español argentino, sin gold-plating".
 
-### Lo que viene técnicamente
+### Lo que viene
 
-**Etapa 3 — Extracción IA de planilla**:
-- Subir imagen/PDF de la planilla desde `/operario/despachos/nuevo` (o quizá una variante para que admin también lo pueda hacer, ya que el doc dice "Dueño sube PDF").
-- Mandar a Gemini 2.5 Flash via `@google/genai` con un prompt estructurado que devuelva JSON: header del despacho + array de rollos con confianza por campo.
-- Mostrar pantalla side-by-side: imagen original a la izquierda, tabla editable de rollos extraídos a la derecha. Filas con baja confianza arrancan resaltadas.
-- Validaciones automáticas (las mismas que ya existen en el form manual): cantidad de rollos vs declarado, números de pieza únicos, suma de kilos consistente, valores en rangos plausibles.
-- Confirmar → rollos quedan en estado `pendiente`, esperando confirmación física por scanner (Etapa 4).
-- Necesita `GEMINI_API_KEY` env var en Vercel.
-- Storage en Supabase para guardar la imagen original (acceso desde `/operario/despachos/[id]`).
-
-**Etapa 4 — Confirmación física en mobile**:
-- `@zxing/browser` para scanner de QR + códigos de barra.
-- Vista mobile-first en `/operario/confirmar` con cámara fullscreen.
-- Cada scan: matchea `codigo_externo` o `numero_pieza` con un rollo `pendiente` del mismo despacho. Bloquea si no matchea.
-- Asigna ubicación al rollo.
-- Pasa el rollo a `en_stock`.
-- Despacho pasa a `confirmado` cuando todos los rollos están en stock.
+El detalle técnico de cada etapa está en la **Sección 10** de este mismo documento. La próxima en la cola es **Etapa 3 (extracción IA de planilla)**, después de cerrar el último test del flow de invitación multi-tenant.
