@@ -458,9 +458,9 @@ export default function NuevoDespachoForm({
           )}
           {validations.ubicacionesFaltantes > 0 && (
             <p className="text-destructive">
-              ⚠ Faltan ubicaciones en {validations.ubicacionesFaltantes} rollo
-              {validations.ubicacionesFaltantes > 1 ? 's' : ''} con estado
-              &quot;en stock&quot;.
+              ⚠ Faltan ubicaciones en {validations.ubicacionesFaltantes}{' '}
+              {validations.ubicacionesFaltantes === 1 ? 'rollo' : 'rollos'} con
+              estado &quot;en stock&quot;.
             </p>
           )}
           {!validations.cantidadCoincide && (
