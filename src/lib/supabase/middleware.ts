@@ -1,9 +1,10 @@
 import { createServerClient } from '@supabase/ssr'
 import { NextResponse, type NextRequest } from 'next/server'
 
-type Role = 'operario' | 'ventas' | 'admin'
+type Role = 'operario' | 'ventas' | 'admin' | 'super'
 
 function dashboardForRole(role: Role | null | undefined): string {
+  if (role === 'super') return '/super'
   if (role === 'operario') return '/operario/dashboard'
   if (role === 'ventas') return '/ventas/dashboard'
   return '/admin/dashboard'
@@ -52,12 +53,11 @@ export async function updateSession(request: NextRequest) {
   if (user) {
     const { data: profile } = await supabase
       .from('profiles')
-      .select('role, is_super_admin')
+      .select('role')
       .eq('id', user.id)
       .single()
 
     const role = profile?.role as Role | undefined
-    const isSuperAdmin = profile?.is_super_admin === true
     const dest = dashboardForRole(role)
 
     // /auth/setup requiere sesión pero no debe rebotar al dashboard
@@ -65,16 +65,25 @@ export async function updateSession(request: NextRequest) {
       return supabaseResponse
     }
 
-    // En login o raíz → al dashboard del rol (super-admin va a /super)
+    // En login o raíz → al dashboard del rol
     if (pathname === '/' || pathname === '/login') {
-      return NextResponse.redirect(
-        new URL(isSuperAdmin ? '/super' : dest, request.url)
-      )
+      return NextResponse.redirect(new URL(dest, request.url))
     }
 
-    // /super solo para super-admin
-    if (pathname.startsWith('/super') && !isSuperAdmin) {
+    // /super solo para role='super'
+    if (pathname.startsWith('/super') && role !== 'super') {
       return NextResponse.redirect(new URL(dest, request.url))
+    }
+
+    // Super-admin no puede entrar a rutas de empresa-cliente
+    // (no tiene empresa_id, vería datos cruzados/raros)
+    if (
+      role === 'super' &&
+      (pathname.startsWith('/admin') ||
+        pathname.startsWith('/ventas') ||
+        pathname.startsWith('/operario'))
+    ) {
+      return NextResponse.redirect(new URL('/super', request.url))
     }
 
     // Guards por sección de rol

@@ -6,6 +6,7 @@ const ROLE_LABEL: Record<string, string> = {
   admin: 'Admin',
   operario: 'Operario',
   ventas: 'Ventas',
+  super: 'Super-admin',
 }
 
 export default async function EquipoPage() {

@@ -21,11 +21,11 @@ async function requireSuperAdmin() {
 
   const { data: profile } = await supabase
     .from('profiles')
-    .select('is_super_admin')
+    .select('role')
     .eq('id', user.id)
     .single()
 
-  return profile?.is_super_admin ? user : null
+  return profile?.role === 'super' ? user : null
 }
 
 export async function createEmpresaConAdmin(input: {

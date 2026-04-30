@@ -16,11 +16,11 @@ export default async function SuperLayout({
 
   const { data: profile } = await supabase
     .from('profiles')
-    .select('nombre, is_super_admin')
+    .select('nombre, role')
     .eq('id', user.id)
     .single()
 
-  if (!profile?.is_super_admin) redirect('/')
+  if (profile?.role !== 'super') redirect('/')
 
   return (
     <div className="min-h-screen flex flex-col bg-zinc-50">
