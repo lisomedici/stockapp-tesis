@@ -1,23 +1,53 @@
 'use client'
 
-import { useMemo, useState } from 'react'
+import { useMemo, useRef, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import {
   createDespacho,
   createTintoreriaInline,
   createArticuloInline,
+  procesarPlanillaConIA,
   type RolloInput,
 } from './actions'
+import {
+  UMBRAL_BAJA_CONFIANZA,
+  type DespachoExtraido,
+  type Field,
+} from '@/lib/extraccion/extraerPlanilla'
 
 type Catalog = { id: string; nombre: string }
+
+type Modo = 'manual' | 'ia'
+
+/**
+ * Confianza por celda — mismo shape que `DespachoExtraido` pero solo con los
+ * números de confianza, alineado con los rollos por índice.
+ */
+type Confianzas = {
+  numero_remito: number
+  fecha: number
+  color: number
+  ot: number
+  rem_tejeduria: number
+  referencia: number
+  total_rollos_declarado: number
+  total_kilos_declarado: number
+  rollos: Array<{
+    numero_pieza: number
+    kilos: number
+    metros: number
+    ratio: number
+    gramaje_planilla: number
+  }>
+}
 
 function emptyRollo(): RolloInput {
   return {
     numero_pieza: '',
-    color: '',
     kilos: '',
     metros: '',
     ratio_rendimiento: '',
+    gramaje_planilla: '',
     ubicacion: '',
     estado: 'en_stock',
   }
@@ -25,6 +55,30 @@ function emptyRollo(): RolloInput {
 
 function todayISO() {
   return new Date().toISOString().split('T')[0]
+}
+
+function fmt(v: number | null): string {
+  return v === null || v === undefined ? '' : String(v)
+}
+
+/** Normaliza un Field<T> para usarlo en el form (string vacío si null). */
+function valOf<T>(f: Field<T>): string {
+  if (f.value === null || f.value === undefined) return ''
+  return String(f.value)
+}
+
+/** Promedio simple de confianzas — usado para el `confianza_ia` por rollo. */
+function avg(nums: number[]): number {
+  if (!nums.length) return 0
+  return nums.reduce((a, b) => a + b, 0) / nums.length
+}
+
+/** Clase Tailwind para celdas con baja confianza (borde amarillo). */
+function celdaCls(confianza: number | undefined): string {
+  if (confianza === undefined) return 'border-input'
+  return confianza < UMBRAL_BAJA_CONFIANZA
+    ? 'border-warning ring-1 ring-warning/40'
+    : 'border-input'
 }
 
 export default function NuevoDespachoForm({
@@ -35,16 +89,33 @@ export default function NuevoDespachoForm({
   articulos: Catalog[]
 }) {
   const router = useRouter()
+  const fileInputRef = useRef<HTMLInputElement>(null)
 
   // Catálogos (mutable porque se pueden agregar inline)
   const [tintorerias, setTintorerias] = useState(initialTintorerias)
   const [articulos, setArticulos] = useState(initialArticulos)
+
+  // Modo de carga
+  const [modo, setModo] = useState<Modo>('manual')
+
+  // Estado del flow IA
+  const [archivo, setArchivo] = useState<File | null>(null)
+  const [previewUrl, setPreviewUrl] = useState<string | null>(null)
+  const [imagenPath, setImagenPath] = useState<string | null>(null)
+  const [extrayendo, setExtrayendo] = useState(false)
+  const [extraccionError, setExtraccionError] = useState<string | null>(null)
+  const [warnings, setWarnings] = useState<string[]>([])
+  const [confianzas, setConfianzas] = useState<Confianzas | null>(null)
 
   // Header
   const [tintoreriaId, setTintoreriaId] = useState('')
   const [articuloId, setArticuloId] = useState('')
   const [fecha, setFecha] = useState(todayISO())
   const [numeroRemito, setNumeroRemito] = useState('')
+  const [color, setColor] = useState('')
+  const [ot, setOt] = useState('')
+  const [remTejeduria, setRemTejeduria] = useState('')
+  const [referencia, setReferencia] = useState('')
   const [totalRollosDeclarado, setTotalRollosDeclarado] = useState('')
   const [totalKilosDeclarado, setTotalKilosDeclarado] = useState('')
 
@@ -74,6 +145,120 @@ export default function NuevoDespachoForm({
     } else {
       setRollos(rollos.filter((_, i) => i !== idx))
     }
+    if (confianzas) {
+      const nuevas = { ...confianzas }
+      nuevas.rollos = nuevas.rollos.filter((_, i) => i !== idx)
+      setConfianzas(nuevas)
+    }
+  }
+
+  function resetIA() {
+    setArchivo(null)
+    setPreviewUrl(null)
+    setImagenPath(null)
+    setExtrayendo(false)
+    setExtraccionError(null)
+    setWarnings([])
+    setConfianzas(null)
+  }
+
+  function cambiarModo(nuevo: Modo) {
+    if (nuevo === modo) return
+    if (nuevo === 'manual') {
+      // Pasar a manual: limpio estado IA pero conservo lo que el usuario haya editado en el form
+      resetIA()
+    }
+    setModo(nuevo)
+  }
+
+  async function handleArchivoSeleccionado(file: File) {
+    setArchivo(file)
+    setExtraccionError(null)
+    setWarnings([])
+    setConfianzas(null)
+
+    // Preview local (solo para imágenes; PDF queda con preview genérico)
+    if (file.type.startsWith('image/')) {
+      const reader = new FileReader()
+      reader.onload = (e) => setPreviewUrl(e.target?.result as string)
+      reader.readAsDataURL(file)
+    } else {
+      setPreviewUrl(null)
+    }
+
+    setExtrayendo(true)
+    const formData = new FormData()
+    formData.set('archivo', file)
+    const result = await procesarPlanillaConIA(formData)
+    setExtrayendo(false)
+
+    if (!result.ok) {
+      setExtraccionError(result.error)
+      if (result.imagen_path) setImagenPath(result.imagen_path)
+      return
+    }
+
+    setImagenPath(result.imagen_path)
+    setWarnings(result.warnings)
+    aplicarDatosIA(result.datos)
+  }
+
+  function aplicarDatosIA(datos: DespachoExtraido) {
+    // Header
+    setNumeroRemito(valOf(datos.numero_remito))
+    if (datos.fecha.value) setFecha(datos.fecha.value)
+    setColor(valOf(datos.color))
+    setOt(valOf(datos.ot))
+    setRemTejeduria(valOf(datos.rem_tejeduria))
+    setReferencia(valOf(datos.referencia))
+    setTotalRollosDeclarado(
+      datos.total_rollos_declarado.value !== null
+        ? String(datos.total_rollos_declarado.value)
+        : ''
+    )
+    setTotalKilosDeclarado(
+      datos.total_kilos_declarado.value !== null
+        ? String(datos.total_kilos_declarado.value)
+        : ''
+    )
+
+    // Rollos: en flow IA arrancan en `pendiente` (esperan scanner físico de Etapa 4)
+    const rollosFromIA: RolloInput[] = datos.rollos.map((r) => ({
+      numero_pieza: valOf(r.numero_pieza),
+      kilos: fmt(r.kilos.value),
+      metros: fmt(r.metros.value),
+      ratio_rendimiento: fmt(r.ratio.value),
+      gramaje_planilla: fmt(r.gramaje_planilla.value),
+      ubicacion: '',
+      estado: 'pendiente',
+      confianza_ia: avg([
+        r.numero_pieza.confidence,
+        r.kilos.confidence,
+        r.metros.confidence,
+        r.ratio.confidence,
+        r.gramaje_planilla.confidence,
+      ]),
+    }))
+    setRollos(rollosFromIA.length > 0 ? rollosFromIA : [emptyRollo()])
+
+    // Confianzas para el render visual
+    setConfianzas({
+      numero_remito: datos.numero_remito.confidence,
+      fecha: datos.fecha.confidence,
+      color: datos.color.confidence,
+      ot: datos.ot.confidence,
+      rem_tejeduria: datos.rem_tejeduria.confidence,
+      referencia: datos.referencia.confidence,
+      total_rollos_declarado: datos.total_rollos_declarado.confidence,
+      total_kilos_declarado: datos.total_kilos_declarado.confidence,
+      rollos: datos.rollos.map((r) => ({
+        numero_pieza: r.numero_pieza.confidence,
+        kilos: r.kilos.confidence,
+        metros: r.metros.confidence,
+        ratio: r.ratio.confidence,
+        gramaje_planilla: r.gramaje_planilla.confidence,
+      })),
+    })
   }
 
   // Validaciones derivadas
@@ -106,13 +291,16 @@ export default function NuevoDespachoForm({
       totalKilosNum === null ||
       Math.abs(totalKilosNum - sumaKilos) < 0.01
 
-    // Para cada rollo en_stock con número de pieza, ubicación es obligatoria
-    const ubicacionesFaltantes = rollos.filter(
-      (r) =>
-        r.numero_pieza.trim() &&
-        r.estado === 'en_stock' &&
-        !r.ubicacion.trim()
-    ).length
+    // Solo en modo manual: ubicación obligatoria si estado=en_stock
+    const ubicacionesFaltantes =
+      modo === 'manual'
+        ? rollos.filter(
+            (r) =>
+              r.numero_pieza.trim() &&
+              r.estado === 'en_stock' &&
+              !r.ubicacion.trim()
+          ).length
+        : 0
 
     return {
       sumaKilos,
@@ -122,22 +310,26 @@ export default function NuevoDespachoForm({
       kilosCoinciden,
       ubicacionesFaltantes,
     }
-  }, [rollos, totalRollosDeclarado, totalKilosDeclarado])
+  }, [rollos, totalRollosDeclarado, totalKilosDeclarado, modo])
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
     setSubmitting(true)
     setSubmitError(null)
 
-    // El action hace un redirect server-side cuando todo sale OK,
-    // así que solo volvemos acá si hubo error.
     const result = await createDespacho({
       tintoreria_id: tintoreriaId,
       articulo_id: articuloId,
       fecha_despacho: fecha,
       numero_remito: numeroRemito,
+      color,
+      ot,
+      rem_tejeduria: remTejeduria,
+      referencia,
       total_rollos_declarado: totalRollosDeclarado,
       total_kilos_declarado: totalKilosDeclarado,
+      imagen_path: imagenPath ?? undefined,
+      origen: modo === 'ia' ? 'planilla_ia' : 'manual',
       rollos: rollos.filter((r) => r.numero_pieza.trim()),
     })
 
@@ -149,6 +341,7 @@ export default function NuevoDespachoForm({
 
   const blockSubmit =
     submitting ||
+    extrayendo ||
     !tintoreriaId ||
     !articuloId ||
     !fecha ||
@@ -158,6 +351,124 @@ export default function NuevoDespachoForm({
 
   return (
     <form onSubmit={handleSubmit} className="space-y-6">
+      {/* Toggle de modo */}
+      <div className="rounded-lg border bg-white p-4 shadow-sm flex items-center gap-2">
+        <button
+          type="button"
+          onClick={() => cambiarModo('manual')}
+          className={`flex-1 rounded-md px-4 py-2 text-sm font-medium transition-colors ${
+            modo === 'manual'
+              ? 'bg-primary text-primary-foreground'
+              : 'bg-zinc-100 hover:bg-zinc-200'
+          }`}
+        >
+          Cargar a mano
+        </button>
+        <button
+          type="button"
+          onClick={() => cambiarModo('ia')}
+          className={`flex-1 rounded-md px-4 py-2 text-sm font-medium transition-colors ${
+            modo === 'ia'
+              ? 'bg-primary text-primary-foreground'
+              : 'bg-zinc-100 hover:bg-zinc-200'
+          }`}
+        >
+          Subir planilla con IA
+        </button>
+      </div>
+
+      {/* Zona de subida + estado IA */}
+      {modo === 'ia' && (
+        <div className="rounded-lg border bg-white p-5 shadow-sm space-y-4">
+          {!archivo && !extrayendo && !extraccionError && (
+            <UploadArea
+              onFile={handleArchivoSeleccionado}
+              fileInputRef={fileInputRef}
+            />
+          )}
+
+          {extrayendo && (
+            <div className="flex items-center gap-3 rounded-md bg-zinc-50 px-4 py-6 text-sm">
+              <Spinner />
+              <div>
+                <p className="font-medium">Procesando planilla con IA...</p>
+                <p className="text-xs text-muted-foreground">
+                  Esto suele tomar 5-10 segundos.
+                </p>
+              </div>
+            </div>
+          )}
+
+          {extraccionError && (
+            <div className="rounded-md border border-destructive/30 bg-destructive/5 p-4 space-y-3">
+              <p className="text-sm font-medium text-destructive">
+                ⚠ La IA no pudo procesar la planilla
+              </p>
+              <p className="text-xs text-muted-foreground">
+                {extraccionError}
+              </p>
+              <div className="flex gap-2">
+                <button
+                  type="button"
+                  onClick={() => archivo && handleArchivoSeleccionado(archivo)}
+                  className="rounded-md bg-primary px-3 py-1.5 text-xs font-medium text-primary-foreground hover:bg-primary/90"
+                >
+                  Reintentar IA
+                </button>
+                <button
+                  type="button"
+                  onClick={() => cambiarModo('manual')}
+                  className="rounded-md border bg-white px-3 py-1.5 text-xs hover:bg-zinc-50"
+                >
+                  Cargar a mano
+                </button>
+              </div>
+            </div>
+          )}
+
+          {archivo && !extrayendo && !extraccionError && (
+            <div className="space-y-3">
+              <div className="flex items-start gap-3 rounded-md border bg-zinc-50 p-3">
+                {previewUrl ? (
+                  <img
+                    src={previewUrl}
+                    alt="Planilla"
+                    className="h-20 w-20 object-cover rounded"
+                  />
+                ) : (
+                  <div className="h-20 w-20 rounded bg-zinc-200 flex items-center justify-center text-xs text-muted-foreground">
+                    PDF
+                  </div>
+                )}
+                <div className="flex-1 min-w-0">
+                  <p className="text-sm font-medium truncate">{archivo.name}</p>
+                  <p className="text-xs text-muted-foreground">
+                    {(archivo.size / 1024).toFixed(1)} KB · datos extraídos
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={resetIA}
+                  className="text-xs text-muted-foreground hover:text-destructive"
+                >
+                  Quitar
+                </button>
+              </div>
+
+              {warnings.length > 0 && (
+                <div className="rounded-md border border-warning/30 bg-warning/5 p-3 space-y-1">
+                  {warnings.map((w, i) => (
+                    <p key={i} className="text-xs text-foreground">
+                      💡 {w}
+                    </p>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+      )}
+
       {/* Header */}
       <div className="rounded-lg border bg-white p-5 shadow-sm space-y-4">
         <h2 className="font-semibold">Datos del despacho</h2>
@@ -228,7 +539,7 @@ export default function NuevoDespachoForm({
               value={fecha}
               onChange={(e) => setFecha(e.target.value)}
               required
-              className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              className={`w-full rounded-md border bg-background px-3 py-2 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring ${celdaCls(confianzas?.fecha)}`}
             />
           </div>
 
@@ -239,7 +550,18 @@ export default function NuevoDespachoForm({
               value={numeroRemito}
               onChange={(e) => setNumeroRemito(e.target.value)}
               placeholder="Ej: 0001-00012345"
-              className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              className={`w-full rounded-md border bg-background px-3 py-2 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring ${celdaCls(confianzas?.numero_remito)}`}
+            />
+          </div>
+
+          <div className="space-y-1">
+            <label className="text-sm font-medium">Color</label>
+            <input
+              type="text"
+              value={color}
+              onChange={(e) => setColor(e.target.value)}
+              placeholder="Ej: Blanco"
+              className={`w-full rounded-md border bg-background px-3 py-2 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring ${celdaCls(confianzas?.color)}`}
             />
           </div>
 
@@ -253,7 +575,7 @@ export default function NuevoDespachoForm({
               value={totalRollosDeclarado}
               onChange={(e) => setTotalRollosDeclarado(e.target.value)}
               placeholder="Ej: 24"
-              className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              className={`w-full rounded-md border bg-background px-3 py-2 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring ${celdaCls(confianzas?.total_rollos_declarado)}`}
             />
           </div>
 
@@ -268,7 +590,40 @@ export default function NuevoDespachoForm({
               value={totalKilosDeclarado}
               onChange={(e) => setTotalKilosDeclarado(e.target.value)}
               placeholder="Ej: 480.50"
-              className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              className={`w-full rounded-md border bg-background px-3 py-2 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring ${celdaCls(confianzas?.total_kilos_declarado)}`}
+            />
+          </div>
+
+          <div className="space-y-1">
+            <label className="text-sm font-medium">OT</label>
+            <input
+              type="text"
+              value={ot}
+              onChange={(e) => setOt(e.target.value)}
+              placeholder="Orden de trabajo"
+              className={`w-full rounded-md border bg-background px-3 py-2 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring ${celdaCls(confianzas?.ot)}`}
+            />
+          </div>
+
+          <div className="space-y-1">
+            <label className="text-sm font-medium">Remito tejeduría</label>
+            <input
+              type="text"
+              value={remTejeduria}
+              onChange={(e) => setRemTejeduria(e.target.value)}
+              placeholder="Remito de la tejeduría"
+              className={`w-full rounded-md border bg-background px-3 py-2 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring ${celdaCls(confianzas?.rem_tejeduria)}`}
+            />
+          </div>
+
+          <div className="space-y-1">
+            <label className="text-sm font-medium">Referencia</label>
+            <input
+              type="text"
+              value={referencia}
+              onChange={(e) => setReferencia(e.target.value)}
+              placeholder="Ej: SBI"
+              className={`w-full rounded-md border bg-background px-3 py-2 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring ${celdaCls(confianzas?.referencia)}`}
             />
           </div>
         </div>
@@ -290,10 +645,10 @@ export default function NuevoDespachoForm({
               <tr>
                 <th className="px-3 py-2 font-medium w-10">#</th>
                 <th className="px-3 py-2 font-medium">N° Pieza *</th>
-                <th className="px-3 py-2 font-medium">Color</th>
                 <th className="px-3 py-2 font-medium w-24">Kilos</th>
                 <th className="px-3 py-2 font-medium w-24">Metros</th>
                 <th className="px-3 py-2 font-medium w-20">Ratio</th>
+                <th className="px-3 py-2 font-medium w-20">Gramaje</th>
                 <th className="px-3 py-2 font-medium w-32">Estado</th>
                 <th className="px-3 py-2 font-medium w-28">Ubicación</th>
                 <th className="px-3 py-2 w-10"></th>
@@ -301,10 +656,12 @@ export default function NuevoDespachoForm({
             </thead>
             <tbody>
               {rollos.map((r, i) => {
+                const conf = confianzas?.rollos[i]
                 const isDuplicate =
                   r.numero_pieza.trim() &&
                   validations.duplicados.includes(r.numero_pieza.trim())
                 const ubicacionFaltante =
+                  modo === 'manual' &&
                   r.numero_pieza.trim() &&
                   r.estado === 'en_stock' &&
                   !r.ubicacion.trim()
@@ -327,19 +684,8 @@ export default function NuevoDespachoForm({
                         className={`w-full rounded border px-2 py-1.5 text-sm focus:outline-none focus:ring-1 focus:ring-ring ${
                           isDuplicate
                             ? 'border-destructive'
-                            : 'border-input'
+                            : celdaCls(conf?.numero_pieza)
                         }`}
-                      />
-                    </td>
-                    <td className="px-3 py-1">
-                      <input
-                        type="text"
-                        value={r.color}
-                        onChange={(e) =>
-                          updateRollo(i, 'color', e.target.value)
-                        }
-                        placeholder="Blanco"
-                        className="w-full rounded border border-input px-2 py-1.5 text-sm focus:outline-none focus:ring-1 focus:ring-ring"
                       />
                     </td>
                     <td className="px-3 py-1">
@@ -352,7 +698,7 @@ export default function NuevoDespachoForm({
                           updateRollo(i, 'kilos', e.target.value)
                         }
                         placeholder="20.5"
-                        className="w-full rounded border border-input px-2 py-1.5 text-sm focus:outline-none focus:ring-1 focus:ring-ring"
+                        className={`w-full rounded border px-2 py-1.5 text-sm focus:outline-none focus:ring-1 focus:ring-ring ${celdaCls(conf?.kilos)}`}
                       />
                     </td>
                     <td className="px-3 py-1">
@@ -365,7 +711,7 @@ export default function NuevoDespachoForm({
                           updateRollo(i, 'metros', e.target.value)
                         }
                         placeholder="50"
-                        className="w-full rounded border border-input px-2 py-1.5 text-sm focus:outline-none focus:ring-1 focus:ring-ring"
+                        className={`w-full rounded border px-2 py-1.5 text-sm focus:outline-none focus:ring-1 focus:ring-ring ${celdaCls(conf?.metros)}`}
                       />
                     </td>
                     <td className="px-3 py-1">
@@ -378,7 +724,20 @@ export default function NuevoDespachoForm({
                           updateRollo(i, 'ratio_rendimiento', e.target.value)
                         }
                         placeholder="2.4"
-                        className="w-full rounded border border-input px-2 py-1.5 text-sm focus:outline-none focus:ring-1 focus:ring-ring"
+                        className={`w-full rounded border px-2 py-1.5 text-sm focus:outline-none focus:ring-1 focus:ring-ring ${celdaCls(conf?.ratio)}`}
+                      />
+                    </td>
+                    <td className="px-3 py-1">
+                      <input
+                        type="number"
+                        step="0.01"
+                        min="0"
+                        value={r.gramaje_planilla ?? ''}
+                        onChange={(e) =>
+                          updateRollo(i, 'gramaje_planilla', e.target.value)
+                        }
+                        placeholder="142"
+                        className={`w-full rounded border px-2 py-1.5 text-sm focus:outline-none focus:ring-1 focus:ring-ring ${celdaCls(conf?.gramaje_planilla)}`}
                       />
                     </td>
                     <td className="px-3 py-1">
@@ -497,6 +856,81 @@ export default function NuevoDespachoForm({
         </button>
       </div>
     </form>
+  )
+}
+
+// ── Componentes auxiliares ──────────────────────────────────
+
+function UploadArea({
+  onFile,
+  fileInputRef,
+}: {
+  onFile: (file: File) => void
+  fileInputRef: React.RefObject<HTMLInputElement | null>
+}) {
+  const [dragOver, setDragOver] = useState(false)
+
+  return (
+    <label
+      onDragOver={(e) => {
+        e.preventDefault()
+        setDragOver(true)
+      }}
+      onDragLeave={() => setDragOver(false)}
+      onDrop={(e) => {
+        e.preventDefault()
+        setDragOver(false)
+        const file = e.dataTransfer.files?.[0]
+        if (file) onFile(file)
+      }}
+      className={`flex flex-col items-center justify-center gap-2 rounded-lg border-2 border-dashed p-8 cursor-pointer transition-colors ${
+        dragOver
+          ? 'border-primary bg-primary/5'
+          : 'border-input hover:bg-zinc-50'
+      }`}
+    >
+      <p className="text-sm font-medium">
+        Arrastrá la planilla acá o hacé click para elegir
+      </p>
+      <p className="text-xs text-muted-foreground">
+        JPG, PNG, WebP, HEIC o PDF
+      </p>
+      <input
+        ref={fileInputRef}
+        type="file"
+        accept="image/jpeg,image/jpg,image/png,image/webp,image/heic,image/heif,application/pdf"
+        className="hidden"
+        onChange={(e) => {
+          const file = e.target.files?.[0]
+          if (file) onFile(file)
+        }}
+      />
+    </label>
+  )
+}
+
+function Spinner() {
+  return (
+    <svg
+      className="h-5 w-5 animate-spin text-primary"
+      xmlns="http://www.w3.org/2000/svg"
+      fill="none"
+      viewBox="0 0 24 24"
+    >
+      <circle
+        className="opacity-25"
+        cx="12"
+        cy="12"
+        r="10"
+        stroke="currentColor"
+        strokeWidth="4"
+      ></circle>
+      <path
+        className="opacity-75"
+        fill="currentColor"
+        d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
+      ></path>
+    </svg>
   )
 }
 

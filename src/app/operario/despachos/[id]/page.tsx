@@ -87,6 +87,7 @@ export default async function DespachoDetailPage({
       <div className="rounded-lg border bg-white p-5 shadow-sm grid grid-cols-2 sm:grid-cols-4 gap-4">
         <Field label="Tintorería" value={tintoreria ?? '—'} />
         <Field label="Artículo" value={articulo ?? '—'} />
+        <Field label="Color" value={despacho.color ?? '—'} />
         <Field label="Número de remito" value={despacho.numero_remito ?? '—'} />
         <Field
           label="Total declarado"
@@ -109,7 +110,6 @@ export default async function DespachoDetailPage({
           <thead className="border-b text-left">
             <tr>
               <th className="px-4 py-2 font-medium">N° Pieza</th>
-              <th className="px-4 py-2 font-medium">Color</th>
               <th className="px-4 py-2 font-medium">Kilos</th>
               <th className="px-4 py-2 font-medium">Metros</th>
               <th className="px-4 py-2 font-medium">Ratio</th>
@@ -124,7 +124,6 @@ export default async function DespachoDetailPage({
                 return (
                   <tr key={r.id} className="border-b last:border-0">
                     <td className="px-4 py-2 font-medium">{r.numero_pieza}</td>
-                    <td className="px-4 py-2">{r.color ?? '—'}</td>
                     <td className="px-4 py-2">{r.kilos ?? '—'}</td>
                     <td className="px-4 py-2">{r.metros ?? '—'}</td>
                     <td className="px-4 py-2">{r.ratio_rendimiento ?? '—'}</td>
@@ -144,7 +143,7 @@ export default async function DespachoDetailPage({
             ) : (
               <tr>
                 <td
-                  colSpan={7}
+                  colSpan={6}
                   className="px-4 py-8 text-center text-sm text-muted-foreground"
                 >
                   Sin rollos cargados.

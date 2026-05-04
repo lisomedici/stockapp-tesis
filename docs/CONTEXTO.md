@@ -107,11 +107,13 @@ Tablas principales:
 
 ### `despachos`
 - id, empresa_id, tintoreria_id, articulo_id, fecha_despacho, numero_remito, total_rollos_declarado, total_kilos_declarado, estado, **origen** (`manual`|`planilla_ia`), imagen_url, created_by, created_at
+- **Post-007** se agregan: `color` (movido desde rollos), `ot`, `rem_tejeduria`, `referencia` (todos TEXT NULL)
 - Estados: `borrador` → `auditado` → `confirmado`
 - "Despacho" = una llegada de mercadería con su remito (header). Los rollos son las "líneas".
 
 ### `rollos`
-- id, empresa_id, despacho_id, articulo_id, numero_pieza (string), codigo_externo (QR/barcode de la tintorería), color, **ubicacion** (slot tipo "A42"), pantone, foto_url, kilos, metros, ratio_rendimiento, kilos_propios, metros_propios, ancho_propio, gramaje_propio, estado, confianza_ia, created_at
+- id, empresa_id, despacho_id, articulo_id, numero_pieza (string), color, **ubicacion** (slot tipo "A42"), pantone, foto_url, kilos, metros, ratio_rendimiento, kilos_propios, metros_propios, ancho_propio, gramaje_propio, estado, confianza_ia, created_at
+- **Post-007**: `codigo_externo` ELIMINADO (era redundante: el QR físico codifica el mismo `numero_pieza`). `color` ELIMINADO (se movió a `despachos`). Se agrega `gramaje_planilla NUMERIC(5,2) NULL`.
 - Estados: `pendiente` → `en_stock` → `reservado` → `entregado`
 - Salidas adicionales: `reservado` → `en_stock` (cancelación), cualquiera → `baja` (dueño)
 - UNIQUE (despacho_id, numero_pieza)
@@ -216,8 +218,9 @@ Todas idempotentes, todas pegadas en Supabase SQL Editor.
 | 004 | RLS: operario también puede INSERT en `despachos` y `rollos` (no solo UPDATE) |
 | 005 | **Multi-tenant**. Tabla `empresas`, `empresa_id` en todas, RLS por empresa, trigger auto-set, helper functions |
 | 006 | Super-admin como rol propio (`role='super'`), empresa_id NULLABLE solo para super, CHECK constraint |
+| 007 | **Cleanup pre-IA** (Etapa 3): `color` movido de `rollos` a `despachos` (1 lote = 1 color), `codigo_externo` eliminado de `rollos` (redundante con `numero_pieza`), agrega `ot/rem_tejeduria/referencia` en `despachos` y `gramaje_planilla` en `rollos` para trazabilidad de planilla |
 
-**Schema canónico actualizado**: `supabase/schema.sql` refleja el estado FINAL post-006 (para fresh installs).
+**Schema canónico**: ⚠ `supabase/schema.sql` está **DESACTUALIZADO** — refleja solo Etapa 2 base, sin migraciones 005/006/007. Para DB nueva: correr `schema.sql` + todas las migraciones en orden. Actualización pendiente agendada en Etapa 7D.
 
 ---
 
@@ -272,8 +275,8 @@ Por default Supabase usa el flow **legacy** que no funciona con SSR. Hay que cus
 | 1 | Modelo de datos + auth con roles | ✅ |
 | 2 | Ingreso manual de despacho con sus rollos | ✅ |
 | Multi-tenant | (no era etapa, se metió entre 2 y 3) | ✅ pendiente último test de invitación con email template fixeado |
-| **3** | **Extracción IA de planilla + auditoría side-by-side** | ⏳ próxima |
-| 4 | Confirmación física en mobile (scanner) | ⏳ |
+| **3** | **Extracción IA de planilla (foto/PDF) + auditoría relajada** | ⏳ en curso |
+| 4 | Confirmación física en mobile (scanner QR) | ⏳ |
 | 5 | Vista de stock con filtros | ⏳ |
 | 6 | Pedidos + picking | ⏳ |
 | 7 | Muestras + reportes + rediseño UI/UX | ⏳ |
@@ -284,50 +287,80 @@ En cada etapa que se cierre, dedicar 20-30 min a que las pantallas nuevas no que
 
 ---
 
-### Etapa 3 — Extracción IA de planilla + auditoría
+### Etapa 3 — Extracción IA de planilla + auditoría relajada
 
-**Objetivo**: admin (o operario) sube imagen/PDF de la planilla que llegó de la tintorería. La IA extrae los rollos automáticamente. Vista side-by-side con la imagen original a la izquierda y tabla editable a la derecha. Humano audita y confirma. Es el feature **diferenciador del MVP**.
+**Objetivo**: el **admin** sube foto o PDF de la planilla de tintorería. Una IA (Gemini 2.5 Flash) extrae los rollos en formato tabla. El admin audita rápido (umbral de confianza visual, sin validación celda-por-celda) y guarda. Los rollos quedan en estado `pendiente` hasta que en Etapa 4 el operario los confirme físicamente con scanner. Es el feature **diferenciador del MVP**.
 
-**Pasos**:
-1. **Setup Gemini**: cuenta en https://aistudio.google.com → generar API key → agregar `GEMINI_API_KEY` a Vercel (Production + Preview, marcado sensitive) y a `.env.local`.
-2. **Setup Storage en Supabase**: crear bucket "planillas" (privado) en Storage → política RLS que cada empresa solo accede a sus archivos (usar `current_empresa_id()`).
-3. **Instalar dependencia**: `npm install @google/genai`.
-4. **Crear abstracción IA** en `src/lib/ai/extraerPlanilla.ts`:
-   - Función `extraerPlanilla(file: Buffer, mimeType: string): Promise<DespachoExtraido>`.
-   - Tipos: `DespachoExtraido { numero_remito?, fecha?, total_rollos?, total_kilos?, color?, rollos: RolloExtraido[] }`.
-   - `RolloExtraido { numero_pieza, color, kilos, metros, ratio?, confianza }`.
-5. **Implementación con Gemini** en `src/lib/ai/gemini.ts`:
-   - Prompt explicando que la planilla viene en **bloques paralelos de columnas**.
-   - Pedir JSON output con schema (Gemini soporta `responseSchema`).
-   - Calcular confianza por campo basado en heurísticas (longitud del texto, formato esperado, etc.).
-6. **UI nueva en `/operario/despachos/nuevo`**:
-   - Toggle al inicio del form: "Cargar a mano" vs "Subir planilla con IA".
-   - Si "Subir planilla":
-     - Drag-and-drop area que acepta JPG, PNG, PDF.
-     - Preview de la imagen.
-     - Spinner mientras IA procesa (típicamente 3-8 segundos).
-     - Auto-llena el form con los datos extraídos.
-     - Filas con baja confianza en algún campo: borde amarillo + tooltip "verificá este valor".
-7. **Storage de la imagen**: subir a bucket "planillas" antes/después de procesar, guardar URL en `despachos.imagen_url`.
-8. **Vista side-by-side**:
-   - Desktop: layout split 50/50 (imagen zoomable izquierda, tabla editable derecha).
-   - Mobile: tabs ("Planilla" / "Datos extraídos").
-9. **Marcar origen**: cuando se guarda, `despachos.origen = 'planilla_ia'` (en vez de 'manual').
-10. **Estado del despacho**: queda como `auditado` (no `confirmado` directo), porque los rollos no fueron físicamente verificados aún. Eso pasa en Etapa 4.
+#### Decisiones acordadas en grilling (mayo 2026)
+
+1. **Modelo B confirmado**: planilla IA crea rollos `pendiente` → scanner físico (Etapa 4) los pasa a `en_stock`.
+2. **Admin Y operario pueden subir planilla** en Etapa 3. Ventas NO (su rol es crear pedidos, no cargar despachos). La pantalla `/operario/despachos/nuevo` (existente desde Etapa 2) se extiende con un toggle "Cargar a mano" / "Subir planilla con IA" — admin accede al mismo path porque es superset de operario. Cero duplicación de código.
+3. **Diseño desktop-first** (admin típicamente está en oficina con PC). Mobile-first sigue aplicando para Etapa 4 (operario en depósito con celu).
+4. **Side-by-side cancelado**: el admin tiene la planilla física en la mano (o la imagen en otra ventana), no necesita comparar contra una imagen embebida. Layout simple: tabla editable a pantalla completa. Imagen guardada en Storage queda accesible vía thumbnail/modal por si hace falta.
+5. **Multi-formato planilla**: solo **foto (JPG/PNG) y PDF** en MVP. Excel queda postergado (la mayoría de tintorerías mandan foto/PDF; Excel es <10% según user).
+6. **`codigo_externo` se elimina del schema**: en la realidad textil, el QR/barcode del rollo físico codifica el mismo `numero_pieza` que figura en la planilla. No hay un código separado. Migración 007 lo dropea.
+7. **Color va de `rollos` a `despachos`**: cada despacho de entrada (tintorería → depósito) es **monocromo** (la tintorería tiñe lotes de un color). Los pedidos a cliente (depósito → cliente) sí pueden mezclar colores y eso funciona vía la m2m `pedido_rollos` ya existente. Migración 007 mueve el campo.
+8. **Campos extra de trazabilidad guardados**: la planilla trae OT (orden de trabajo), REM.TEJ. (remito de tejeduría), REFERENCIA y Pm2 (gramaje). Los 4 se guardan ahora en migración 007 (nullables) por si se necesita trazabilidad futura. Costo cero.
+9. **Auditoría relajada**: celdas con confianza <0.85 aparecen con borde amarillo + tooltip, pero NO bloquean el guardado. El admin tiene la planilla al lado, escanea visualmente, corrige lo que ve mal, guarda. Sin flow paso-a-paso obligatorio.
+10. **Fallback 3-tier blando**:
+    - **Falla técnica de la IA** (timeout, JSON inválido) → mensaje + botón "Reintentar IA" + botón "Cargar a mano" (cae al modo Etapa 2 con la imagen ya guardada visible en thumbnail).
+    - **Extracción incompleta** (header dice 24 rollos, IA extrajo 18) → banner amarillo "Faltan 6 rollos, agregalos a mano". No bloquea.
+    - **Calidad pobre** (>30% de celdas <0.85 confianza) → banner gris con recomendación. No bloquea.
+    La filosofía: avisar fuerte, NUNCA bloquear el guardado en Etapa 3. El bloqueo duro es de Etapa 4 (scanner).
+11. **Caso "rollos llegan sin planilla" postergado a Etapa 7**. Ocurre "a veces" (~10-25% según user). Se va a medir en uso real con Muter; si confirma frecuencia alta, se construye flow de cross-check entonces.
+
+#### Plan de sub-etapas
+
+**3.0 — Migración 007: cleanup de schema**
+- Mover `color` de `rollos` a `despachos`
+- Eliminar `codigo_externo` de `rollos`
+- Agregar `ot`, `rem_tejeduria`, `referencia` a `despachos` (TEXT NULL)
+- Agregar `gramaje_planilla` a `rollos` (NUMERIC(5,2) NULL)
+- Idempotente como las anteriores
+- Aplicar en Supabase SQL Editor antes de tocar código
+
+**3.1 — Setup infra (~30 min, requiere acción manual del user)**
+- Cuenta gratis en https://aistudio.google.com, generar API key Gemini 2.5 Flash
+- `GEMINI_API_KEY` en `.env.local` y Vercel (Production + Preview, sensitive)
+- Bucket privado `planillas` en Supabase Storage + RLS por `current_empresa_id()`
+- `npm install @google/genai`
+
+**3.2 — Función pura de extracción (~60 min)**
+- `src/lib/extraccion/extraerPlanilla.ts`: tipos `DespachoExtraido`, `RolloExtraido` con `confianza` por campo
+- `src/lib/extraccion/gemini.ts`: implementación con `responseSchema` estructurado, prompt diseñado para "bloques paralelos de columnas" (estilo planilla Muter)
+- Probarla aislada con la planilla de Muter (foto compartida en grilling)
+
+**3.3 — Storage helpers (~20 min)**
+- `src/lib/storage/planillas.ts`: upload con path `{empresa_id}/{yyyy-mm}/{uuid}.{ext}`, devuelve URL firmada para mostrar imagen guardada
+
+**3.4 — UI extendida en `/operario/despachos/nuevo` (~60 min)**
+- Toggle al inicio: "Cargar a mano" (default) / "Subir planilla con IA"
+- Si IA: drag-drop (foto/PDF), spinner durante extracción, auto-fill de tabla editable
+- Tabla con celdas de baja confianza marcadas amarillas + tooltip
+- Banners de fallback (los 3 casos del punto 10)
+- Imagen guardada accesible vía thumbnail (modal con zoom)
+- Layout desktop-first (cards/tabla densa); mobile responsive como bonus
+- Mismo path que Etapa 2 — admin entra como superset de operario
+
+**3.6 — Persistencia y verificación E2E (~30 min)**
+- Server action: upload imagen → llamar IA → crear despacho con `origen='planilla_ia'`, `estado='auditado'` y rollos en `pendiente`
+- Probar end-to-end con planilla real de Muter
 
 **Archivos nuevos**:
-- `src/lib/ai/extraerPlanilla.ts`, `src/lib/ai/gemini.ts`
-- `src/lib/storage/planillas.ts` (helpers de upload a Supabase Storage)
+- `supabase/migrations/007_cleanup_schema_pre_ia.sql`
+- `src/lib/extraccion/extraerPlanilla.ts`, `src/lib/extraccion/gemini.ts`
+- `src/lib/storage/planillas.ts`
 
 **Archivos a modificar**:
-- `src/app/operario/despachos/nuevo/NuevoDespachoForm.tsx` (agregar modo IA)
-- `src/app/operario/despachos/nuevo/actions.ts` (manejar el upload + IA)
+- `src/app/operario/despachos/nuevo/NuevoDespachoForm.tsx` — agregar toggle IA + drag-drop + spinner + auto-fill + fallbacks
+- `src/app/operario/despachos/nuevo/actions.ts` — agregar `procesarPlanillaConIA` + adaptar `createDespacho` para soportar `imagen_path` y `origen='planilla_ia'`
+- Schema canónico en `supabase/schema.sql` se actualiza con todos los cambios de 007 (pendiente).
 
 **Variables de entorno nuevas**: `GEMINI_API_KEY`.
 
-**Verificable**: subir una planilla real de Muter (foto de la papelita con 24 rollos), ver los rollos extraídos correctamente con confianza por celda, corregir lo que la IA leyó mal (ej: 0/O confundidos), confirmar y ver el despacho cargado en estado `auditado`.
+**Verificable**: el admin sube la planilla compartida de Muter (24 rollos blancos), ve la tabla extraída con confianza visual, corrige lo que la IA leyó mal (típico: 0/O, decimales borrosos), guarda, ve el despacho cargado en estado `auditado` con 24 rollos en `pendiente`.
 
-**Tiempo estimado**: 4-6 horas guiadas.
+**Tiempo estimado**: 4-5 horas guiadas (sin contar la decisión inicial de Etapa 3 ya gastada en grilling).
 
 ---
 
@@ -346,10 +379,11 @@ En cada etapa que se cierre, dedicar 20-30 min a que las pantallas nuevas no que
    - Detector zxing corriendo en loop, intenta cada frame.
    - Soporta QR, Code128, EAN-13, EAN-8, ITF.
 4. **Lógica de match** al escanear un código:
-   - Buscar `rollo` donde `(codigo_externo = X OR numero_pieza = X) AND despacho_id = id AND estado = 'pendiente'`.
+   - Buscar `rollo` donde `numero_pieza = X AND despacho_id = id AND estado = 'pendiente'` (post-007 `codigo_externo` ya no existe; el QR físico codifica el `numero_pieza`).
    - Si **match único**: dialog "Rollo X" → input "Ubicación (ej: A42)" → guardar → rollo pasa a `en_stock`.
    - Si **no match**: error rojo "Este código no pertenece a este despacho" + botón "Ingresar manualmente".
    - Si **ya escaneado**: error "Ya confirmado".
+   - **Pendiente confirmar (en grilling de Etapa 4)**: si los rollos físicos vienen con QR/Code128 escaneable o solo número impreso. Si es solo número impreso, el flow cambia (necesita OCR de cámara o tipeo manual).
 5. **Progreso visible** arriba:
    - Banner: "12 de 24 rollos confirmados".
    - Lista colapsable de pendientes (números de pieza).
@@ -517,6 +551,16 @@ Es la más larga. Se divide en 4 sub-bloques.
 22. **Editar usuarios y cambiar rol** (en `/admin/equipo`).
 23. **Eliminar usuario** (admin de la empresa puede dar de baja a su equipo; super-admin puede a cualquiera).
 24. **Forgot password flow**: pantalla `/auth/recover` que pide mail, llama `supabase.auth.resetPasswordForEmail()`. Supabase manda mail, link va a `/auth/setup` para nueva contraseña.
+25. **🚨 Setup SMTP custom con Resend (BLOQUEANTE PARA LAUNCH)**: el built-in email de Supabase tiene un cap duro de **2 emails/hora por proyecto**, no escala con plan paid (ni Pro $25/mes ni Team $599/mes lo aumentan — está deprecado para producción). Ya nos chocamos con esto en testing: una empresa-cliente onboardeando + invitando 2-3 usuarios pega el límite. Plan: cuenta gratis en Resend (resend.com, 3.000 emails/mes free, 100/día), verificar dominio propio (idealmente comprar `stockapp.com.ar` o `stockapp.app`), cargar credenciales SMTP en Supabase → Authentication → SMTP Settings, subir rate limit en Authentication → Rate Limits a 60-100/h. Setup ~20 min. Sin esto el día del launch los emails de invitación van a fallar después de los primeros 2.
+26b. **Actualizar `supabase/schema.sql` al estado canónico post-007**: hoy el archivo solo refleja Etapa 2 base. Hay que regenerar el archivo completo incluyendo migraciones 005 (multi-tenant + RLS por empresa + triggers), 006 (super-admin + CHECK constraint), 007 (color en despachos, drop codigo_externo, campos de trazabilidad). Útil para fresh installs en otras instancias o para que un colaborador nuevo arme la DB local sin tener que correr 7 migraciones en orden. **Bajo blocker** porque el desarrollo cotidiano usa la DB ya migrada.
+
+26. **🔐 Login con username + creación manual de usuarios sin email (BLOQUEANTE PARA LAUNCH)**: cambio de modelo de auth pensado para que operarios/ventas (gente del depósito, baja afinidad técnica, sin email corporativo) entren con un username corto en vez de email completo. Además, el admin de empresa puede **crear cuentas directamente sin invitación** poniéndoles una contraseña default que el usuario cambia en el primer login.
+    - **Flow nuevo de creación**: en `/admin/equipo` el form tiene dos modos: (a) "Invitar por email" (lo actual, queda para casos donde sí querés mandar mail), (b) "Agregar manualmente" → admin completa nombre + username + password default + rol → al usuario le sale flag `password_change_required = true`. Primer login lo manda a `/auth/cambiar-password` antes de seguir.
+    - **Implementación de username con Supabase**: Supabase Auth está casado con email, así que se usa el patrón estándar de **email fake interno**: el username se guarda como `<username>@<empresa-slug>.stockapp.local` en `auth.users.email`, pero la UI nunca lo muestra. Login pide "Usuario" + password, el front le agrega el sufijo basado en el slug de empresa (que se elige al hacer login, dropdown o subdominio).
+    - **Schema**: agregar `profiles.username` (UNIQUE composite con `empresa_id`) y `empresas.slug` (UNIQUE global, ej: "muter"). Migración 008.
+    - **Decisión pendiente**: ¿admin/super también logean con username, o solo operario/ventas? Recomendación: admin/super con email (uso esporádico, gente técnica, recibe mails reales); operario/ventas con username. Pero quizás todo username queda más uniforme — definir cuando se implemente.
+    - **Forgot password sin email para operario/ventas**: el admin de la empresa lo resetea desde `/admin/equipo` (botón "Resetear contraseña" → genera password temporal nuevo + flag `password_change_required`). Para admin/super sí se usa el flow de email (Resend ya estará conectado).
+    - **Tiempo estimado**: 3-4 horas (incluye migración 008, refactor de login, nuevo form de creación manual, pantalla de cambio de password obligatorio, botón de reset desde admin).
 
 **Verificable al final de Etapa 7**: app navegable, prolija, responsive en celular y desktop, lista para mostrar en defensa de tesis.
 
@@ -609,6 +653,7 @@ $0 actualmente. Free tiers de GitHub + Vercel + Supabase + Google AI Studio (cua
 9. **Cuentas de prueba que están dando vueltas**:
    - `admin@probando.com` (admin de Muter Textil — fake email, no recibe mails, password seteado a mano)
    - `tsilvafelgueras@itba.edu.ar` (super-admin de la plataforma — Trinidad)
+10. **Email rate limit 2/h en Supabase built-in**: durante todo el desarrollo del MVP nos vamos a chocar con esto si invitamos varios usuarios seguidos. Workarounds en dev: esperar 1 hora entre tandas, usar cuentas ya creadas con password seteado a mano desde Supabase Dashboard → Authentication → Users (no requiere mail), o resetear password manualmente. El fix definitivo (Resend) está agendado en Etapa 7D punto 25 — **antes del launch sí o sí**.
 
 ---
 

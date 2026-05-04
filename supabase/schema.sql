@@ -1,8 +1,18 @@
 -- ============================================================
--- StockApp — Schema completo (Etapa 2)
--- Ejecutar en Supabase → SQL Editor → Run All para una DB nueva.
--- Para una DB existente con la estructura de Etapa 1, ver:
---   supabase/migrations/001_etapa2_refactor.sql
+-- StockApp — Schema (Etapa 2 base, NO actualizado a 005/006/007)
+--
+-- ⚠ ESTE ARCHIVO ESTÁ DESACTUALIZADO. No incluye:
+--   - Multi-tenant (migración 005)
+--   - Super-admin como rol (migración 006)
+--   - Cleanup pre-IA: color en despachos, drop codigo_externo,
+--     campos de trazabilidad de planilla (migración 007)
+--
+-- Para una DB nueva: NO usar este archivo. Correr en orden:
+--   schema.sql (este, base de Etapa 2) +
+--   001_etapa2_refactor.sql + 002 + 003 + 004 + 005 + 006 + 007
+--
+-- TODO: actualizar este archivo a estado canónico post-007
+-- (agendado en CONTEXTO.md sección Etapa 7D).
 -- ============================================================
 
 
