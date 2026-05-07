@@ -1,6 +1,6 @@
 import { createClient } from '@/lib/supabase/server'
-import Link from 'next/link'
-import ArticuloForm from './ArticuloForm'
+import BackButton from '@/components/BackButton'
+import { NuevoArticuloForm, EditArticuloRow } from './ArticuloForm'
 
 export default async function ArticulosPage() {
   const supabase = await createClient()
@@ -14,12 +14,7 @@ export default async function ArticulosPage() {
     <div className="p-6 max-w-4xl mx-auto space-y-6">
       <div className="flex items-center justify-between">
         <div>
-          <Link
-            href="/admin/dashboard"
-            className="text-xs text-muted-foreground hover:text-foreground"
-          >
-            ← Volver
-          </Link>
+          <BackButton href="/admin/dashboard" />
           <h1 className="text-2xl font-bold mt-1">Artículos</h1>
           <p className="text-sm text-muted-foreground">
             Tipos de tela disponibles
@@ -27,7 +22,7 @@ export default async function ArticulosPage() {
         </div>
       </div>
 
-      <ArticuloForm />
+      <NuevoArticuloForm />
 
       <div className="rounded-lg border bg-white shadow-sm overflow-hidden">
         <table className="w-full text-sm">
@@ -35,27 +30,13 @@ export default async function ArticulosPage() {
             <tr className="text-left">
               <th className="px-4 py-3 font-medium">Nombre</th>
               <th className="px-4 py-3 font-medium">Descripción</th>
-              <th className="px-4 py-3 font-medium">Estado</th>
+              <th className="px-4 py-3 font-medium">Acciones</th>
             </tr>
           </thead>
           <tbody>
             {articulos && articulos.length > 0 ? (
               articulos.map((a) => (
-                <tr key={a.id} className="border-b last:border-0">
-                  <td className="px-4 py-3 font-medium">{a.nombre}</td>
-                  <td className="px-4 py-3 text-muted-foreground">
-                    {a.descripcion || '—'}
-                  </td>
-                  <td className="px-4 py-3">
-                    {a.activo ? (
-                      <span className="text-xs text-success">Activo</span>
-                    ) : (
-                      <span className="text-xs text-muted-foreground">
-                        Inactivo
-                      </span>
-                    )}
-                  </td>
-                </tr>
+                <EditArticuloRow key={a.id} articulo={a} />
               ))
             ) : (
               <tr>

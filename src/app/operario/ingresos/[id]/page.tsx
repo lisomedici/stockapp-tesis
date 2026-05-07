@@ -1,5 +1,5 @@
 import { createClient } from '@/lib/supabase/server'
-import Link from 'next/link'
+import BackButton from '@/components/BackButton'
 import { notFound } from 'next/navigation'
 
 const ESTADO_INGRESO: Record<string, { text: string; className: string }> = {
@@ -66,12 +66,7 @@ export default async function IngresoDetailPage({
       )}
 
       <div>
-        <Link
-          href="/operario/ingresos"
-          className="text-xs text-muted-foreground hover:text-foreground"
-        >
-          ← Volver a ingresos
-        </Link>
+        <BackButton href="/operario/ingresos" label="Volver a ingresos" />
         <div className="flex flex-wrap items-center gap-3 mt-1">
           <h1 className="text-xl sm:text-2xl font-bold">
             Ingreso del {ingreso.fecha_despacho}

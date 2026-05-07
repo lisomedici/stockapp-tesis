@@ -62,6 +62,7 @@ export type ProcesarPlanillaResult =
         | 'GEMINI_ERROR'
         | 'JSON_INVALID'
         | 'NO_API_KEY'
+        | 'FORMATO_INVALIDO'
         | 'OTHER'
       /** Si la imagen ya se subió pero la IA falló, devolvemos el path para reintento. */
       imagen_path?: string

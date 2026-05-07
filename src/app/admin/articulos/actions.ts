@@ -22,3 +22,26 @@ export async function createArticulo(formData: {
   revalidatePath('/admin/articulos')
   return { success: true }
 }
+
+export async function updateArticulo(
+  id: string,
+  formData: { nombre: string; descripcion: string }
+) {
+  const supabase = await createClient()
+
+  const nombre = formData.nombre.trim()
+  if (!nombre) return { error: 'El nombre es obligatorio.' }
+
+  const { error } = await supabase
+    .from('articulos')
+    .update({
+      nombre,
+      descripcion: formData.descripcion.trim() || null,
+    })
+    .eq('id', id)
+
+  if (error) return { error: error.message }
+
+  revalidatePath('/admin/articulos')
+  return { success: true }
+}

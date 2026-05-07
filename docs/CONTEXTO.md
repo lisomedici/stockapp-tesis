@@ -278,9 +278,9 @@ Por default Supabase usa el flow **legacy** que no funciona con SSR. Hay que cus
 | 1 | Modelo de datos + auth con roles | ✅ |
 | 2 | Ingreso manual de despacho con sus rollos | ✅ |
 | Multi-tenant | (no era etapa, se metió entre 2 y 3) | ✅ pendiente último test de invitación con email template fixeado |
-| **3** | **Extracción IA con configs por tintorería + sidebar/nav + mobile-first** | ✅ completa post-correcciones |
-| 4 | Confirmación física en mobile (scanner QR) | ⏳ próxima |
-| 5 | Vista de stock con filtros | ⏳ |
+| 3 | Extracción IA con configs por tintorería + sidebar/nav + mobile-first | ✅ completa post-correcciones |
+| **4** | **Confirmación física en mobile (scanner QR)** | ✅ completa |
+| 5 | Vista de stock con filtros | ⏳ próxima |
 | 6 | Pedidos + picking | ⏳ |
 | 7 | Muestras + reportes + rediseño UI/UX | ⏳ |
 
@@ -385,7 +385,7 @@ Después del primer test de la Etapa 3 base, el user identificó 6 cosas a corre
 
 ---
 
-### Etapa 4 — Confirmación física por scanner
+### Etapa 4 — Confirmación física por scanner ✅
 
 **Objetivo**: el operario va al depósito con su celular, escanea cada rollo físico, asigna ubicación, y el rollo pasa de `pendiente` a `en_stock`. Es la "aduana" del sistema.
 
@@ -419,9 +419,28 @@ Después del primer test de la Etapa 3 base, el user identificó 6 cosas a corre
 - `src/app/operario/confirmar/[id]/Scanner.tsx` (Client component con zxing)
 - `src/app/operario/confirmar/[id]/actions.ts` (`confirmarRollo()`)
 
-**Verificable**: con un despacho cargado por IA en estado `auditado` (rollos en `pendiente`), ir a `/operario/confirmar`, escanear los códigos físicos uno por uno, ver progreso en tiempo real, intentar escanear un código equivocado y ver el bloqueo, terminar con despacho en `confirmado`.
+**Verificable**: con un ingreso cargado por IA en estado `auditado` (rollos en `pendiente`), ir a `/operario/confirmar`, escanear los códigos físicos uno por uno, ver progreso en tiempo real, intentar escanear un código equivocado y ver el bloqueo, terminar con ingreso en `confirmado`.
 
 **Tiempo estimado**: 3-4 horas.
+
+#### Implementación real (mayo 2026)
+
+**Archivos creados**:
+- `src/app/operario/confirmar/page.tsx`: lista de ingresos con rollos pendientes, mini barra de progreso por ingreso
+- `src/app/operario/confirmar/[id]/page.tsx`: header del ingreso + renderiza Scanner
+- `src/app/operario/confirmar/[id]/Scanner.tsx`: Client component — cámara con `@zxing/browser`, visor de escaneo con esquinas, modal de ubicación al detectar código, barra de progreso, lista colapsable de pendientes, toggle "Ingresar a mano" como fallback
+- `src/app/operario/confirmar/[id]/actions.ts`: `confirmarRollo(ingresoId, numeroPieza, ubicacion)` — valida que el rollo pertenezca al ingreso, rechaza si ya está confirmado, cierra ingreso automáticamente cuando todos pasan a `en_stock`
+
+**Dependencias instaladas**: `@zxing/browser@0.2.0`, `@zxing/library@0.22.0`
+
+**Confirmado con el cliente**: los rollos físicos de Muter tienen QR/barcode escaneable (no es solo número impreso). El flujo principal es scanner; el modo manual es fallback.
+
+**Fixes previos aplicados en la misma sesión** (antes de arrancar Etapa 4):
+- Tintorerías: removido form de creación del admin (solo devs las crean vía SQL)
+- Timeout Gemini: 45s con `Promise.race`, error `FORMATO_INVALIDO` si imagen no es planilla (0 rollos extraídos)
+- Edición de artículos: `updateArticulo()` + `EditArticuloRow` con inline editing
+- Ventas dashboard: cards con badge "Etapa 5/6" y opacidad, aviso de próximamente, botón volver para admin
+- `BackButton` global: componente `src/components/BackButton.tsx` reemplaza todos los "← Volver" hardcodeados
 
 ---
 
@@ -717,4 +736,4 @@ Cuando otra persona del equipo (compañero, futuro contributor) toma una tarea:
 
 ### Lo que viene
 
-El detalle técnico de cada etapa está en la **Sección 10**. Etapas completadas: 0, 1, 2, multi-tenant, 3. **Próxima: Etapa 4** (confirmación física por scanner QR/barcode — el operario va al depósito con el celu y escanea cada rollo `pendiente` para pasarlo a `en_stock`).
+El detalle técnico de cada etapa está en la **Sección 10**. Etapas completadas: 0, 1, 2, multi-tenant, 3, 4. **Próxima: Etapa 5** (vista de stock con filtros — cualquier rol logueado puede browsear el stock disponible, filtrar por artículo/color/ubicación, ver fotos).

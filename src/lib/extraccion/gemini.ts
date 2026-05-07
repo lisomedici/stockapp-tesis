@@ -116,35 +116,46 @@ export async function extraerConGemini(
 
   const prompt = buildPrompt(configKey)
 
+  const TIMEOUT_MS = 45_000
+
   let response
   try {
     const ai = new GoogleGenAI({ apiKey })
-    response = await ai.models.generateContent({
-      model: MODELO,
-      contents: [
-        {
-          role: 'user',
-          parts: [
-            {
-              inlineData: {
-                data: fileBuffer.toString('base64'),
-                mimeType,
+    const timeout = new Promise<never>((_, reject) =>
+      setTimeout(
+        () => reject(new Error('La IA tardó demasiado. Intentá de nuevo o cargá manualmente.')),
+        TIMEOUT_MS
+      )
+    )
+    response = await Promise.race([
+      ai.models.generateContent({
+        model: MODELO,
+        contents: [
+          {
+            role: 'user',
+            parts: [
+              {
+                inlineData: {
+                  data: fileBuffer.toString('base64'),
+                  mimeType,
+                },
               },
-            },
-            { text: prompt },
-          ],
+              { text: prompt },
+            ],
+          },
+        ],
+        config: {
+          responseMimeType: 'application/json',
+          responseSchema: SCHEMA,
         },
-      ],
-      config: {
-        responseMimeType: 'application/json',
-        responseSchema: SCHEMA,
-      },
-    })
+      }),
+      timeout,
+    ])
   } catch (e) {
     const msg = (e as Error).message ?? String(e)
     return {
       ok: false,
-      error: `Error al llamar a Gemini: ${msg}`,
+      error: msg,
       codigo: 'GEMINI_ERROR',
     }
   }
@@ -160,6 +171,14 @@ export async function extraerConGemini(
 
   try {
     const parsed = JSON.parse(text) as IngresoExtraido
+    if (!parsed.rollos || parsed.rollos.length === 0) {
+      return {
+        ok: false,
+        error:
+          'La imagen no parece ser una planilla de tintorería válida. La IA no encontró ningún rollo. Verificá que subiste la foto correcta.',
+        codigo: 'FORMATO_INVALIDO',
+      }
+    }
     return { ok: true, data: parsed }
   } catch (e) {
     return {

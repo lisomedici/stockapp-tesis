@@ -1,6 +1,5 @@
 import { createClient } from '@/lib/supabase/server'
-import Link from 'next/link'
-import TintoreriaForm from './TintoreriaForm'
+import BackButton from '@/components/BackButton'
 
 export default async function TintoreriasPage() {
   const supabase = await createClient()
@@ -13,19 +12,21 @@ export default async function TintoreriasPage() {
   return (
     <div className="p-6 max-w-4xl mx-auto space-y-6">
       <div>
-        <Link
-          href="/admin/dashboard"
-          className="text-xs text-muted-foreground hover:text-foreground"
-        >
-          ← Volver
-        </Link>
+        <BackButton href="/admin/dashboard" />
         <h1 className="text-2xl font-bold mt-1">Tintorerías</h1>
         <p className="text-sm text-muted-foreground">
           Proveedores que tiñen las telas
         </p>
       </div>
 
-      <TintoreriaForm />
+      <div className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
+        <p className="font-medium">¿Necesitás agregar una tintorería nueva?</p>
+        <p className="mt-0.5">
+          Las tintorerías se configuran manualmente por el equipo de StockApp
+          para garantizar que la extracción por IA funcione correctamente con
+          cada proveedor. Contactá a Trinidad para solicitar el alta.
+        </p>
+      </div>
 
       <div className="rounded-lg border bg-white shadow-sm overflow-hidden">
         <table className="w-full text-sm">

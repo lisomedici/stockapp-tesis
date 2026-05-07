@@ -1,9 +1,11 @@
 'use client'
 
 import { useState } from 'react'
-import { createArticulo } from './actions'
+import { createArticulo, updateArticulo } from './actions'
 
-export default function ArticuloForm() {
+type Articulo = { id: string; nombre: string; descripcion: string | null }
+
+export function NuevoArticuloForm() {
   const [nombre, setNombre] = useState('')
   const [descripcion, setDescripcion] = useState('')
   const [loading, setLoading] = useState(false)
@@ -13,9 +15,7 @@ export default function ArticuloForm() {
     e.preventDefault()
     setLoading(true)
     setError(null)
-
     const result = await createArticulo({ nombre, descripcion })
-
     if (result.error) {
       setError(result.error)
     } else {
@@ -73,3 +73,94 @@ export default function ArticuloForm() {
     </form>
   )
 }
+
+export function EditArticuloRow({ articulo }: { articulo: Articulo }) {
+  const [editing, setEditing] = useState(false)
+  const [nombre, setNombre] = useState(articulo.nombre)
+  const [descripcion, setDescripcion] = useState(articulo.descripcion ?? '')
+  const [loading, setLoading] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+
+  async function handleSubmit(e: React.FormEvent) {
+    e.preventDefault()
+    setLoading(true)
+    setError(null)
+    const result = await updateArticulo(articulo.id, { nombre, descripcion })
+    if (result.error) {
+      setError(result.error)
+    } else {
+      setEditing(false)
+    }
+    setLoading(false)
+  }
+
+  if (!editing) {
+    return (
+      <tr className="border-b last:border-0">
+        <td className="px-4 py-3 font-medium">{articulo.nombre}</td>
+        <td className="px-4 py-3 text-muted-foreground">
+          {articulo.descripcion || '—'}
+        </td>
+        <td className="px-4 py-3">
+          <button
+            onClick={() => setEditing(true)}
+            className="text-xs text-primary hover:underline"
+          >
+            Editar
+          </button>
+        </td>
+      </tr>
+    )
+  }
+
+  return (
+    <tr className="border-b last:border-0 bg-zinc-50">
+      <td colSpan={3} className="px-4 py-3">
+        <form onSubmit={handleSubmit} className="flex flex-wrap gap-2 items-end">
+          <div className="space-y-1">
+            <label className="text-xs font-medium">Nombre *</label>
+            <input
+              value={nombre}
+              onChange={(e) => setNombre(e.target.value)}
+              required
+              className="rounded-md border border-input bg-white px-2 py-1.5 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            />
+          </div>
+          <div className="space-y-1">
+            <label className="text-xs font-medium">Descripción</label>
+            <input
+              value={descripcion}
+              onChange={(e) => setDescripcion(e.target.value)}
+              placeholder="Opcional"
+              className="rounded-md border border-input bg-white px-2 py-1.5 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            />
+          </div>
+          {error && <p className="w-full text-xs text-destructive">{error}</p>}
+          <div className="flex gap-2">
+            <button
+              type="submit"
+              disabled={loading}
+              className="rounded-md bg-primary px-3 py-1.5 text-xs font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-50 transition-colors"
+            >
+              {loading ? 'Guardando...' : 'Guardar'}
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setEditing(false)
+                setNombre(articulo.nombre)
+                setDescripcion(articulo.descripcion ?? '')
+                setError(null)
+              }}
+              className="rounded-md border px-3 py-1.5 text-xs hover:bg-zinc-100 transition-colors"
+            >
+              Cancelar
+            </button>
+          </div>
+        </form>
+      </td>
+    </tr>
+  )
+}
+
+export default NuevoArticuloForm

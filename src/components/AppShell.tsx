@@ -60,13 +60,7 @@ function navForRole(role: Role): NavSection[] {
         items: [
           { href: '/operario/dashboard', label: 'Inicio', icon: '🏠' },
           { href: '/operario/ingresos', label: 'Ingresos', icon: '📦' },
-          {
-            href: '/operario/confirmar',
-            label: 'Confirmar llegadas',
-            icon: '🔍',
-            disabled: true,
-            comingSoon: 'Etapa 4',
-          },
+          { href: '/operario/confirmar', label: 'Confirmar llegadas', icon: '🔍' },
           {
             href: '/operario/picking',
             label: 'Picking',
@@ -112,13 +106,7 @@ function navForRole(role: Role): NavSection[] {
       title: 'Operación',
       items: [
         { href: '/operario/ingresos', label: 'Ingresos', icon: '📦' },
-        {
-          href: '/operario/confirmar',
-          label: 'Confirmar llegadas',
-          icon: '🔍',
-          disabled: true,
-          comingSoon: 'Etapa 4',
-        },
+        { href: '/operario/confirmar', label: 'Confirmar llegadas', icon: '🔍' },
         {
           href: '/operario/picking',
           label: 'Picking',

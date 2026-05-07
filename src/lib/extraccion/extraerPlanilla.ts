@@ -37,6 +37,7 @@ export type CodigoErrorExtraccion =
   | 'GEMINI_ERROR' // falla técnica del servicio (timeout, 5xx, etc)
   | 'JSON_INVALID' // la IA devolvió texto pero no parseó como JSON
   | 'NO_API_KEY' // GEMINI_API_KEY no configurada
+  | 'FORMATO_INVALIDO' // la imagen no parece una planilla (0 rollos extraídos)
   | 'OTHER'
 
 export type ExtraccionResult =

@@ -1,5 +1,5 @@
 import { createClient } from '@/lib/supabase/server'
-import Link from 'next/link'
+import BackButton from '@/components/BackButton'
 import InviteForm from './InviteForm'
 
 const ROLE_LABEL: Record<string, string> = {
@@ -20,12 +20,7 @@ export default async function EquipoPage() {
   return (
     <div className="p-6 max-w-4xl mx-auto space-y-6">
       <div>
-        <Link
-          href="/admin/dashboard"
-          className="text-xs text-muted-foreground hover:text-foreground"
-        >
-          ← Volver
-        </Link>
+        <BackButton href="/admin/dashboard" />
         <h1 className="text-2xl font-bold mt-1">Equipo</h1>
         <p className="text-sm text-muted-foreground">
           Usuarios que pueden acceder a tu empresa
